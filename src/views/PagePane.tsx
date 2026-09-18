@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, ChevronLeft, ChevronRight, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Editor } from '@tiptap/react'
+import { CalendarDays, ChevronLeft, ChevronRight, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
+import { Comments } from '../components/Comments'
 import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../lib/links'
 import { plainText } from '../lib/html'
 
@@ -16,6 +18,8 @@ interface Props {
   onClose?: () => void
   /** Play the exit animation (the parent removes the pane afterwards). */
   closing?: boolean
+  /** Margin comments are available (single note, no canvas). */
+  comments?: boolean
   autoFocus?: boolean
 }
 
@@ -25,14 +29,26 @@ function rectAnchor(el: Element | null) {
   return r ? { x: r.left, y: r.bottom } : { x: 16, y: 16 }
 }
 
-/** One page: title, the editor, backlinks. */
-export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside, onClose, closing, autoFocus }: Props) {
+/** One page: title, the editor, margin comments, backlinks. */
+export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
   const { getPage, setBody, ensurePage, renamePage, deletePage, backlinks, byId } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
   const [draft, setDraft] = useState(title)
-  const titleInput = useRef<HTMLInputElement>(null)
+  const titleInput = useRef<HTMLTextAreaElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [editor, setEditor] = useState<Editor | null>(null)
+  const [showComments, setShowComments] = useState(() => localStorage.getItem('comments') !== '0')
+  const [focusComment, setFocusComment] = useState<string | null>(null)
+
+  useEffect(() => setDraft(title), [title])
+  // the title wraps: size the textarea to its content
+  useLayoutEffect(() => { const el = titleInput.current; if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }, [draft, daily])
+  // a freshly created "Untitled" note: put the cursor on the title first
+  useEffect(() => { if (!daily && /^untitled( \d+)?$/i.test(title) && !body) titleInput.current?.select() }, [title, daily, body])
+  useEffect(() => { localStorage.setItem('comments', showComments ? '1' : '0') }, [showComments])
+
   // native date picker, opened by "/date" (title or text) and the calendar button
   const dateInput = useRef<HTMLInputElement>(null)
   const datePending = useRef<((d: string | null) => void) | null>(null)
@@ -52,14 +68,12 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
     if (!page || page.draft || !body.trim()) { onNavigate(d); return }
     try { await renamePage(page.id, d); onRenamed(title, d) } catch (e) { alert((e as Error).message) }
   }
-  useEffect(() => setDraft(title), [title])
-  // a freshly created "Untitled" note: put the cursor on the title first
-  useEffect(() => { if (!daily && /^untitled( \d+)?$/i.test(title) && !body) titleInput.current?.select() }, [title, daily, body])
 
   const linkedFrom = useMemo(() => (backlinks.get(normTitle(title)) ?? []).map(id => byId.get(id)!).filter(p => p && p.title !== title), [backlinks, byId, title])
+  const words = useMemo(() => plainText(body, 0).split(/\s+/).filter(Boolean).length, [body])
 
   const commitTitle = async () => {
-    const next = draft.trim()
+    const next = draft.replace(/\s+/g, ' ').trim()
     if (!next || next === title) { setDraft(title); return }
     if (!page) { setDraft(title); return }
     try { await renamePage(page.id, next); onRenamed(title, next) }
@@ -85,7 +99,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
             {title !== todayTitle() && <button className="link" onClick={() => onNavigate(todayTitle())}>Today</button>}
           </div>
         ) : (
-          <input ref={titleInput} className="title-input" value={draft} onBlur={commitTitle}
+          <textarea ref={titleInput} className="title-input" rows={1} value={draft} onBlur={commitTitle}
             onChange={e => {
               const v = e.target.value
               if (v.endsWith('/date')) { setDraft(v.slice(0, -5)); pickDate(rectAnchor(e.currentTarget)).then(d => { if (d) goToDate(d) }); return }
@@ -95,16 +109,22 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
         )}
         <input ref={dateInput} type="date" className="date-hidden" tabIndex={-1} aria-hidden
           onChange={e => { const cb = datePending.current; datePending.current = null; cb?.(e.target.value || null) }} />
+        <span className="wc" title="Words in this note">{words} {words === 1 ? 'word' : 'words'}</span>
         <div className="pane-actions">
+          {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}
           {onClose && <button className="icon-btn" title="Close" onClick={onClose}><X size={18} /></button>}
         </div>
       </div>
 
-      <div className="pane-scroll">
+      <div ref={scrollRef} className={'pane-scroll' + (showComments ? '' : ' comments-hidden')}>
         <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
-          onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} pickDate={pickDate} autoFocus={autoFocus} />
+          onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} pickDate={pickDate}
+          comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus} />
+        {comments && showComments && editor && scrollRef.current && (
+          <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
+        )}
 
         {linkedFrom.length > 0 && (
           <div className="backlinks">

@@ -123,8 +123,9 @@ export function Canvas({ canvas, onOpenPage }: Props) {
     setNodes(ns => [...ns, { ...toNode(it), selected: true }])
   }
 
+  const selectedCount = nodes.filter(n => n.selected).length
   const compile = async () => {
-    const ordered = [...nodes].sort((a, b) => Math.round(a.position.y / 60) - Math.round(b.position.y / 60) || a.position.x - b.position.x)
+    const ordered = nodes.filter(n => n.selected).sort((a, b) => Math.round(a.position.y / 60) - Math.round(b.position.y / 60) || a.position.x - b.position.x)
     const parts: string[] = []
     for (const n of ordered) {
       if (n.type === 'page') { const p = store.byId.get(n.data.pageId); if (p) parts.push(`<h2>${p.title}</h2>${p.body}`) }
@@ -170,7 +171,7 @@ export function Canvas({ canvas, onOpenPage }: Props) {
           <Panel position="top-left" className="canvas-tools">
             <button className="btn small" onClick={() => setPicker(true)}><FilePlus size={16} /> Page</button>
             <button className="btn small" onClick={addSticky}><StickyNote size={16} /> Sticky</button>
-            <button className="btn small" onClick={compile} disabled={!nodes.length} title="Stitch the cards, top to bottom, into a new draft page"><FileOutput size={16} /> Compile</button>
+            <button className="btn small" onClick={compile} disabled={!selectedCount} title="Combine the selected cards (shift-click or shift-drag to select several), top to bottom, into one new note"><FileOutput size={16} /> Compile{selectedCount > 1 ? ` (${selectedCount})` : ''}</button>
           </Panel>
           {!loading && nodes.length === 0 && (
             <Panel position="top-center" className="canvas-empty">Empty canvas — add a page or a sticky, then drag things around.</Panel>

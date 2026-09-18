@@ -77,6 +77,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, reload])
 
+  // live updates from other devices (skips rows this device is still saving)
+  useEffect(() => {
+    if (!session) return
+    const ch = supabase.channel('nt-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'nt_pages' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string }).id
+          if (!id) return
+          latest.current.delete(id)
+          setPages(prev => prev.filter(p => p.id !== id))
+          return
+        }
+        const row = payload.new as Page
+        if (timers.current.has(row.id)) return
+        const cur = latest.current.get(row.id)
+        if (cur && cur.updated_at >= row.updated_at && cur.body === row.body && cur.title === row.title) return
+        upsertLocal(row)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
   function schedule(key: string, fn: () => Promise<void>) {
     const t = timers.current.get(key)
     if (t) clearTimeout(t)

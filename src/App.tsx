@@ -161,6 +161,7 @@ function Workspace({ email }: { email: string }) {
                     key={title}
                     title={title}
                     closing={closing.includes(title)}
+                    comments={!narrow && visible.length === 1 && !showCanvas}
                     autoFocus={focusLast && i === panes.length - 1}
                     onOpenLink={t => openBeside(i, t, false)}
                     onNewBeside={narrow || canvasOpen ? undefined : () => newNoteBeside(i)}

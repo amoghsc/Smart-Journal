@@ -1,5 +1,4 @@
 import { Extension, InputRule, Node, mergeAttributes } from '@tiptap/core'
-import { NodeSelection } from '@tiptap/pm/state'
 
 export interface WikilinkOptions {
   /** Maps typed text to the canonical title of an existing page (case-insensitive), or returns it unchanged. */
@@ -13,7 +12,7 @@ interface Pending { from: number; to: number; t: number }
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
-    wikilink: { setWikilink: (title: string) => ReturnType; unsetWikilink: () => ReturnType }
+    wikilink: { setWikilink: (title: string) => ReturnType }
   }
 }
 
@@ -36,7 +35,7 @@ export const Wikilink = Node.create<WikilinkOptions, { pending: Pending | null }
   },
   parseHTML() { return [{ tag: 'a[data-title]' }] },
   renderHTML({ node, HTMLAttributes }) {
-    return ['a', mergeAttributes({ class: 'wikilink', href: '#' }, HTMLAttributes), node.attrs.title]
+    return ['a', mergeAttributes({ class: 'wikilink' }, HTMLAttributes), node.attrs.title]
   },
 
   addCommands() {
@@ -46,12 +45,6 @@ export const Wikilink = Node.create<WikilinkOptions, { pending: Pending | null }
         const title = this.options.resolve(typed)
         this.options.onCreate(title)
         return chain().insertContentAt({ from, to }, { type: this.name, attrs: { title } }).run()
-      },
-      /** Selected link → its plain text (the page itself is untouched). */
-      unsetWikilink: () => ({ state, chain }) => {
-        const sel = state.selection
-        if (!(sel instanceof NodeSelection) || sel.node.type.name !== this.name) return false
-        return chain().insertContentAt({ from: sel.from, to: sel.to }, sel.node.attrs.title as string).run()
       },
     }
   },

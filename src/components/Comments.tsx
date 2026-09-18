@@ -20,12 +20,16 @@ export function Comments({ editor, scrollEl, focusId, onFocused }: Props) {
   const [items, setItems] = useState<CommentInfo[]>([])
   const [tops, setTops] = useState<Map<string, number>>(new Map())
   const [gutter, setGutter] = useState(0)
+  const [left, setLeft] = useState(0)
   const [hover, setHover] = useState<string | null>(null)
 
   const layout = useCallback(() => {
     const list = listComments(editor.state.doc)
     const box = scrollEl.getBoundingClientRect()
-    setGutter(parseFloat(getComputedStyle(editor.view.dom).paddingRight) || 0)
+    const g = parseFloat(getComputedStyle(editor.view.dom).paddingRight) || 0
+    setGutter(g)
+    // cards start just past the text column, not at the far edge of the margin
+    setLeft(editor.view.dom.getBoundingClientRect().right - g - box.left + 20)
     const t = new Map<string, number>()
     let prevBottom = 0
     for (const c of list) {
@@ -62,7 +66,7 @@ export function Comments({ editor, scrollEl, focusId, onFocused }: Props) {
 
   if (gutter < MIN_GUTTER || items.length === 0) return null
   return (
-    <div className="comments" style={{ width: Math.min(280, gutter - 24) }}>
+    <div className="comments" style={{ left, width: Math.min(260, gutter - 36) }}>
       {items.map(c => (
         <CommentCard key={c.id} c={c} top={tops.get(c.id) ?? 0} active={hover === c.id} autoFocus={focusId === c.id} onFocused={onFocused}
           onHover={on => highlight(on ? c.id : null)}

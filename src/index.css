@@ -130,7 +130,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .date-hidden { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1; }
 .pane-actions { display: flex; align-items: center; gap: 2px; flex: none; opacity: 0.6; }
 @media (hover: hover) { .pane:hover .pane-actions { opacity: 1; } }
-.wc { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 12px; }
+.wc { flex: none; height: 30px; display: inline-flex; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 12px; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; position: relative; }
 
 /* editor */
@@ -189,7 +189,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .canvas-tools { display: flex; gap: 6px; margin: 10px; }
 .canvas-tools .btn { background: var(--bg); border: 1px solid var(--line); }
 .canvas-empty { background: var(--bg); border: 1px solid var(--line); color: var(--muted); padding: 6px 12px; border-radius: 999px; font-size: 13px; margin-top: 14px; }
-.card { width: 100%; height: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); display: flex; flex-direction: column; overflow: hidden; }
+.card { width: 100%; height: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.08); display: flex; flex-direction: column; overflow: hidden; }
 .card.selected { border-color: var(--accent); }
 .card-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 13px; }
 .card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -231,7 +231,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .note .comment { background: rgba(245,196,81,0.25); border-bottom: 1px solid rgba(214,160,40,0.8); }
 .note .comment.hl { background: rgba(245,196,81,0.55); }
 .comments-hidden .note .comment { background: transparent; border-bottom: 0; }
-.comments { position: absolute; top: 0; right: 12px; bottom: 0; pointer-events: none; }
+.comments { position: absolute; top: 0; bottom: 0; pointer-events: none; }
 .comment-card { position: absolute; left: 0; right: 0; pointer-events: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 26px 6px 10px; font-size: 13px; line-height: 1.4; transition: top .15s ease, border-color .15s ease; }
 .comment-card.hl, .comment-card:hover { border-color: rgba(214,160,40,0.9); }
 .comment-card textarea { width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; resize: none; overflow: hidden; font-size: 13px; line-height: 1.4; }

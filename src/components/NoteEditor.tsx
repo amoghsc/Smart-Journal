@@ -27,13 +27,23 @@ interface Props {
 
 const LONG_PRESS_MS = 550
 
+/** Document position of the wikilink rendered by `el`, or -1. Tries the DOM mapping first, then the element's centre. */
+function wikilinkPos(view: EditorView, el: HTMLElement): number {
+  const isLink = (p: number) => p >= 0 && view.state.doc.nodeAt(p)?.type.name === 'wikilink'
+  try { const p = view.posAtDOM(el, 0); if (isLink(p)) return p; if (isLink(p - 1)) return p - 1 } catch { /* detached element */ }
+  const r = el.getBoundingClientRect()
+  const c = view.posAtCoords({ left: r.left + r.width / 2, top: r.top + r.height / 2 })
+  if (c) { for (const p of [c.inside, c.pos, c.pos - 1]) if (isLink(p)) return p }
+  return -1
+}
+
 /** Replace the wikilink rendered by `el` with its plain text. */
 function unlinkElement(view: EditorView, el: HTMLElement) {
-  let pos = view.posAtDOM(el, 0)
-  let node = view.state.doc.nodeAt(pos)
-  if (node?.type.name !== 'wikilink' && pos > 0) { pos -= 1; node = view.state.doc.nodeAt(pos) }
-  if (node?.type.name !== 'wikilink') return
-  view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, view.state.schema.text(node.attrs.title as string)))
+  const pos = wikilinkPos(view, el)
+  if (pos < 0) { console.warn('unlink: could not locate link node'); return }
+  const node = view.state.doc.nodeAt(pos)!
+  view.dispatch(view.state.tr.replaceWith(pos, pos + node.nodeSize, view.state.schema.text(node.attrs.title as string)).scrollIntoView())
+  view.focus()
 }
 
 /** Single-surface editor: what you type is what you see. Bullets, numbering, links, [[wikilinks]], comments, YouTube paste. */

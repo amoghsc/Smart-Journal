@@ -3,7 +3,7 @@ import {
   ReactFlow, Background, Controls, MiniMap, NodeResizer, Panel, applyNodeChanges, useReactFlow,
   type Node, type NodeChange, type NodeProps, type NodeTypes,
 } from '@xyflow/react'
-import { ExternalLink, FilePlus, StickyNote, FileOutput, Palette } from 'lucide-react'
+import { ExternalLink, FilePlus, StickyNote, FileOutput, Palette, BoxSelect } from 'lucide-react'
 import { useStore } from '../lib/store'
 import type { CanvasItem, Page } from '../lib/types'
 import { Preview } from './Preview'
@@ -162,6 +162,8 @@ export function Canvas({ canvas, onOpenPage }: Props) {
           maxZoom={2.5}
           panOnScroll
           selectionOnDrag={false}
+          selectionKeyCode="Shift"
+          multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
         >
@@ -171,6 +173,7 @@ export function Canvas({ canvas, onOpenPage }: Props) {
           <Panel position="top-left" className="canvas-tools">
             <button className="btn small" onClick={() => setPicker(true)}><FilePlus size={16} /> Page</button>
             <button className="btn small" onClick={addSticky}><StickyNote size={16} /> Sticky</button>
+            <button className="btn small" onClick={() => setNodes(ns => ns.map(n => ({ ...n, selected: selectedCount < ns.length })))} disabled={!nodes.length} title={selectedCount < nodes.length ? 'Select all cards' : 'Clear selection'}><BoxSelect size={16} /> {selectedCount < nodes.length ? 'Select all' : 'Clear'}</button>
             <button className="btn small" onClick={compile} disabled={!selectedCount} title="Combine the selected cards (shift-click or shift-drag to select several), top to bottom, into one new note"><FileOutput size={16} /> Compile{selectedCount > 1 ? ` (${selectedCount})` : ''}</button>
           </Panel>
           {!loading && nodes.length === 0 && (

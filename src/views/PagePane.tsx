@@ -43,8 +43,18 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
   const [focusComment, setFocusComment] = useState<string | null>(null)
 
   useEffect(() => setDraft(title), [title])
-  // the title wraps: size the textarea to its content
-  useLayoutEffect(() => { const el = titleInput.current; if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }, [draft, daily])
+  // the title wraps: size the textarea to its content, and again whenever its width changes
+  // (the pane animates open from zero width, so the first measurement is far too tall)
+  useLayoutEffect(() => {
+    const el = titleInput.current
+    if (!el) return
+    const fit = () => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' }
+    fit()
+    let w = el.clientWidth
+    const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit() } })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [draft, daily])
   // a freshly created "Untitled" note: put the cursor on the title first
   useEffect(() => { if (!daily && /^untitled( \d+)?$/i.test(title) && !body) titleInput.current?.select() }, [title, daily, body])
   useEffect(() => { localStorage.setItem('comments', showComments ? '1' : '0') }, [showComments])

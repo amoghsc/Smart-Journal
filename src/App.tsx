@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { LayoutGrid, PanelLeft, Settings } from 'lucide-react'
+import { Globe, LayoutGrid, PanelLeft, Settings } from 'lucide-react'
 import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
@@ -7,6 +7,7 @@ import { Login } from './views/Login'
 import { PagePane } from './views/PagePane'
 import { Sidebar } from './views/Sidebar'
 import { CanvasPane } from './views/CanvasPane'
+import { PublishDialog } from './views/PublishDialog'
 import { SplitPane } from './components/SplitPane'
 
 type Theme = 'system' | 'light' | 'dark'
@@ -29,7 +30,7 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, getPage, createDraft, discardDraft } = useStore()
+  const { pages, vault, getPage, createLocal, discardLocal } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
   const [panes, setPanes] = useState<string[]>(() => [todayTitle()])
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 800px)').matches)
@@ -39,6 +40,7 @@ function Workspace({ email }: { email: string }) {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('theme') as Theme) || 'system')
   const [anim, setAnim] = useState(() => localStorage.getItem('anim') !== '0')
   const [focusLast, setFocusLast] = useState(false)
+  const [publishing, setPublishing] = useState(false)
   const [closing, setClosing] = useState<string[]>([])
   // canvas sits between the sidebar and the note; while it is open only the left-most note shows
   const [canvasOpen, setCanvasOpen] = useState(() => localStorage.getItem('canvas-open') === '1')
@@ -104,14 +106,14 @@ function Workspace({ email }: { email: string }) {
 
   // a "+" note that was never edited disappears once it is no longer open
   useEffect(() => {
-    for (const p of pages) if (p.draft && !panes.includes(p.title)) discardDraft(p.id)
-  }, [panes, pages, discardDraft])
+    for (const p of pages) if (p.local && !panes.includes(p.title)) discardLocal(p.id)
+  }, [panes, pages, discardLocal])
 
   const createUntitled = useCallback(() => {
     let n = 1, title = 'Untitled'
     while (getPage(title)) title = `Untitled ${++n}`
-    return createDraft(title).title
-  }, [createDraft, getPage])
+    return createLocal(title).title
+  }, [createLocal, getPage])
   const newNote = useCallback(() => openMain(createUntitled()), [createUntitled, openMain])
   const newNoteBeside = useCallback((i: number) => openBeside(i, createUntitled()), [createUntitled, openBeside])
 
@@ -131,6 +133,7 @@ function Workspace({ email }: { email: string }) {
           <span className="brand">Journal</span>
         </div>
         <div className="top-actions">
+          {vault?.kind === 'public' && <button className="icon-btn" title="Publish this vault" onClick={() => setPublishing(true)}><Globe size={18} /></button>}
           {!narrow && <button className={'icon-btn' + (canvasOpen ? ' on' : '')} title="Toggle canvas" onClick={() => setCanvasOpen(o => !o)}><LayoutGrid size={18} /></button>}
           <button className="icon-btn" onClick={() => setMenu(m => !m)} aria-label="Settings"><Settings size={18} /></button>
         </div>
@@ -174,6 +177,7 @@ function Workspace({ email }: { email: string }) {
             </div>
           } />
       </div>
+      {publishing && vault && <PublishDialog vault={vault} onClose={() => setPublishing(false)} />}
     </div>
   )
 }

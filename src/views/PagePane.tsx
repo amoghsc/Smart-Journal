@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
-import { CalendarDays, ChevronLeft, ChevronRight, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, FolderInput, Globe, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
@@ -31,18 +31,18 @@ function rectAnchor(el: Element | null) {
 
 /** One page: title, the editor, margin comments, backlinks. */
 export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
-  const { getPage, setBody, ensurePage, renamePage, deletePage, backlinks, byId } = useStore()
+  const { getPage, setBody, ensurePage, renamePage, deletePage, setDraft, movePage, vault, vaults, backlinks, byId } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
-  const [draft, setDraft] = useState(title)
+  const [titleText, setTitleText] = useState(title)
   const titleInput = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [showComments, setShowComments] = useState(() => localStorage.getItem('comments') !== '0')
   const [focusComment, setFocusComment] = useState<string | null>(null)
 
-  useEffect(() => setDraft(title), [title])
+  useEffect(() => setTitleText(title), [title])
   // the title wraps: size the textarea to its content, and again whenever its width changes
   // (the pane animates open from zero width, so the first measurement is far too tall)
   useLayoutEffect(() => {
@@ -54,7 +54,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
     const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit() } })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [draft, daily])
+  }, [titleText, daily])
   // a freshly created "Untitled" note: put the cursor on the title first
   useEffect(() => { if (!daily && /^untitled( \d+)?$/i.test(title) && !body) titleInput.current?.select() }, [title, daily, body])
   useEffect(() => { localStorage.setItem('comments', showComments ? '1' : '0') }, [showComments])
@@ -75,7 +75,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
   })
   /** Make this pane show the given day: an untouched note just navigates, a written one is renamed to that day. */
   const goToDate = async (d: string) => {
-    if (!page || page.draft || !body.trim()) { onNavigate(d); return }
+    if (!page || page.local || !body.trim()) { onNavigate(d); return }
     try { await renamePage(page.id, d); onRenamed(title, d) } catch (e) { alert((e as Error).message) }
   }
 
@@ -83,11 +83,22 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
   const words = useMemo(() => plainText(body, 0).split(/\s+/).filter(Boolean).length, [body])
 
   const commitTitle = async () => {
-    const next = draft.replace(/\s+/g, ' ').trim()
-    if (!next || next === title) { setDraft(title); return }
-    if (!page) { setDraft(title); return }
+    const next = titleText.replace(/\s+/g, ' ').trim()
+    if (!next || next === title) { setTitleText(title); return }
+    if (!page) { setTitleText(title); return }
     try { await renamePage(page.id, next); onRenamed(title, next) }
-    catch (e) { alert((e as Error).message); setDraft(title) }
+    catch (e) { alert((e as Error).message); setTitleText(title) }
+  }
+
+  const move = async () => {
+    if (!page) return
+    const others = vaults.filter(v => v.id !== page.vault_id)
+    if (!others.length) return
+    const pick = others.length === 1 ? others[0]
+      : others.find(v => v.name === window.prompt(`Move “${page.title}” to which vault?\n\n${others.map(v => v.name).join('\n')}`, others[0].name)?.trim())
+    if (!pick) return
+    if (!confirm(`Move “${page.title}” to “${pick.name}”?${pick.kind === 'public' ? '\n\nThat vault can be published.' : ''}`)) return
+    try { await movePage(page.id, pick.id); onNavigate(todayTitle()) } catch (e) { alert((e as Error).message) }
   }
 
   const remove = async () => {
@@ -109,18 +120,25 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
             {title !== todayTitle() && <button className="link" onClick={() => onNavigate(todayTitle())}>Today</button>}
           </div>
         ) : (
-          <textarea ref={titleInput} className="title-input" rows={1} value={draft} onBlur={commitTitle}
+          <textarea ref={titleInput} className="title-input" rows={1} value={titleText} onBlur={commitTitle}
             onChange={e => {
               const v = e.target.value
-              if (v.endsWith('/date')) { setDraft(v.slice(0, -5)); pickDate(rectAnchor(e.currentTarget)).then(d => { if (d) goToDate(d) }); return }
-              setDraft(v)
+              if (v.endsWith('/date')) { setTitleText(v.slice(0, -5)); pickDate(rectAnchor(e.currentTarget)).then(d => { if (d) goToDate(d) }); return }
+              setTitleText(v)
             }}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } if (e.key === 'Escape') { setDraft(title); e.currentTarget.blur() } }} />
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } if (e.key === 'Escape') { setTitleText(title); e.currentTarget.blur() } }} />
         )}
         <input ref={dateInput} type="date" className="date-hidden" tabIndex={-1} aria-hidden
           onChange={e => { const cb = datePending.current; datePending.current = null; cb?.(e.target.value || null) }} />
         <span className="wc" title="Words in this note">{words} {words === 1 ? 'word' : 'words'}</span>
         <div className="pane-actions">
+          {page && vault?.kind === 'public' && (
+            <button className={'icon-btn' + (page.draft ? ' on' : '')} title={page.draft ? 'Held back — click to include when publishing' : 'Included when publishing — click to hold back'}
+              onClick={() => setDraft(page.id, !page.draft).catch(e => alert((e as Error).message))}>
+              {page.draft ? <EyeOff size={16} /> : <Globe size={16} />}
+            </button>
+          )}
+          {page && vaults.length > 1 && <button className="icon-btn" title="Move to another vault" onClick={move}><FolderInput size={16} /></button>}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}

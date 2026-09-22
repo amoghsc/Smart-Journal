@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, List, Plus, Search, SquareSplitHorizontal, X } from 'lucide-react'
+import { VaultSwitcher } from './VaultSwitcher'
 import { useStore } from '../lib/store'
 import { isDailyTitle, prettyDate, todayTitle } from '../lib/links'
 import { plainText } from '../lib/html'
@@ -41,9 +42,11 @@ export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpe
   const hasToday = list.some(p => p.title === today)
   const label = (title: string) => isDailyTitle(title) ? prettyDate(title, true) : title
 
+  const draftIds = new Set(pages.filter(p => p.draft).map(p => p.title))
   const row = (title: string, key: string) => (
     <li key={key} className={title === current ? 'on' : ''} onClick={() => onOpen(title)} title={title}>
       <span className={'row-label' + (isDailyTitle(title) ? ' daily' : '')}>{label(title)}</span>
+      {draftIds.has(title) && <span className="row-draft" title="Held back from publishing">draft</span>}
       <button className="row-beside" title="Open to the right" disabled={open.includes(title)}
         onClick={e => { e.stopPropagation(); onOpenBeside(title) }}><SquareSplitHorizontal size={14} /></button>
     </li>
@@ -51,6 +54,7 @@ export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpe
 
   return (
     <aside className="side">
+      <VaultSwitcher />
       <div className="side-head">
         {searchOpen ? (
           <input ref={input} value={q} placeholder={filter === 'daily' ? 'Search days' : 'Search notes'} onChange={e => setQ(e.target.value)}

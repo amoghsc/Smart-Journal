@@ -178,9 +178,10 @@ p.small { margin: 0; line-height: 1.45; }
 .note li > ul, .note li > ol { margin: 0; }
 .note ul { list-style: none; }
 .note ul > li::before { content: ''; position: absolute; left: -0.85em; top: 0.62em; width: 0.42em; height: 0.42em; border-radius: 50%; background: currentColor; }
-.note a { color: var(--accent); text-decoration: none; }
-.note a:hover { text-decoration: underline; }
-.note a.wikilink { cursor: pointer; color: inherit; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+/* links: both underlined; notes in quiet grey, websites in blue */
+.note a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: pointer; }
+.note a:hover { text-decoration-color: var(--accent); }
+.note a.wikilink { cursor: pointer; color: inherit; text-decoration: underline; text-decoration-color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .note a.wikilink:hover { text-decoration-color: var(--fg); }
 .note a.wikilink.ProseMirror-selectednode { background: var(--accent-soft); }
 .note blockquote { margin: 0.4em 0; padding: 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
@@ -363,3 +364,30 @@ p.small { margin: 0; line-height: 1.45; }
 .rename-body p { margin: 0 0 10px; line-height: 1.45; }
 .rename-body code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
 .rename-names { font-size: 15px; }
+
+/* highlighter */
+.note mark { background: #fff1a8; color: inherit; padding: 0 1px; border-radius: 2px; }
+:root[data-theme="dark"] .note mark { background: rgba(250, 204, 21, 0.32); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .note mark { background: rgba(250, 204, 21, 0.32); } }
+
+/* link field in the selection menu */
+.bubble-link { padding: 0 2px 0 6px; gap: 4px; }
+.bubble-link-icon { color: var(--muted); flex: none; }
+.bubble-link input { width: 240px; padding: 3px 6px; font-size: 13px; border-radius: 5px; background: var(--bg2); }
+.bubble-link input.bad { border-color: var(--bad); }
+
+/* [[ picker */
+.suggest { position: fixed; z-index: 70; margin: 0; padding: 4px; list-style: none; min-width: 220px; max-width: 340px; max-height: 280px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+.suggest li { padding: 6px 9px; border-radius: 5px; font-size: 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.suggest li.on { background: var(--accent-soft); }
+.suggest li.create { color: var(--accent); }
+
+/* new note button */
+.icon-btn.new-note { color: var(--accent); }
+.icon-btn.new-note:hover { color: var(--accent); background: var(--accent-soft); }
+
+/* toast */
+#toast { position: fixed; left: 50%; bottom: calc(24px + var(--sab)); z-index: 300; transform: translate(-50%, 12px); opacity: 0; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: min(90vw, 460px); padding: 9px 16px; border-radius: 8px; background: var(--fg); color: var(--bg); box-shadow: 0 10px 30px rgba(0,0,0,0.25); transition: opacity .18s ease, transform .18s ease; text-align: center; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast-msg { font-size: 14px; font-weight: 500; }
+.toast-detail { font-size: 12px; opacity: 0.75; word-break: break-all; }

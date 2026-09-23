@@ -97,20 +97,13 @@ export const Wikilink = Node.create<WikilinkOptions, { pending: Pending | null }
   },
 })
 
-/** Tab on a plain paragraph starts a bullet; Mod-K prompts for a URL. Runs before the list extensions. */
+/** Tab on a plain paragraph starts a bullet. Runs before the list extensions. */
 export const EditorKeys = Extension.create({
   name: 'editorKeys',
   priority: 1000,
   addKeyboardShortcuts() {
     return {
       Tab: () => (this.editor.isActive('listItem') ? false : this.editor.commands.toggleBulletList()),
-      'Mod-k': () => {
-        const prev = this.editor.getAttributes('link').href as string | undefined
-        const url = window.prompt('Link URL', prev ?? '')
-        if (url === null) return true
-        if (!url.trim()) return this.editor.chain().focus().unsetLink().run()
-        return this.editor.chain().focus().extendMarkRange('link').setLink({ href: url.trim() }).run()
-      },
     }
   },
 })

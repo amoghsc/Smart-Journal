@@ -20,7 +20,7 @@ function ago(iso: string): string {
 
 /** Review exactly what will go public, then publish to GitHub (or export a zip). Nothing leaves without this step. */
 export function PublishDialog({ vault, onClose }: Props) {
-  const { pagesIn, updateVault, vaults } = useStore()
+  const { pagesIn, updateVault, vaults, reload } = useStore()
   const [site, setSite] = useState({
     site_title: vault.site_title ?? vault.name,
     site_description: vault.site_description ?? '',
@@ -50,6 +50,7 @@ export function PublishDialog({ vault, onClose }: Props) {
     try {
       await updateVault(vault.id, settings())
       setResult(await publishToGitHub(plan, { ...vault, ...settings() }, publishedOthers(vaults, vault.id)))
+      await reload()   // the publisher records the vault's folder and publish time
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
 

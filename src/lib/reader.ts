@@ -259,9 +259,12 @@ input[type=search]::-webkit-search-cancel-button { display: none; }
 .note li > ul, .note li > ol { margin: 0; }
 .note ul { list-style: none; }
 .note ul > li::before { content: ''; position: absolute; left: -0.85em; top: 0.62em; width: 0.42em; height: 0.42em; border-radius: 50%; background: currentColor; }
-.note a { color: var(--accent); text-decoration: none; }
-.note a:hover { text-decoration: underline; }
-.note a.wikilink { color: inherit; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.note a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.note a:hover { text-decoration-color: var(--accent); }
+.note a.wikilink { color: inherit; text-decoration: underline; text-decoration-color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.note mark { background: #fff1a8; color: inherit; padding: 0 1px; border-radius: 2px; }
+:root[data-theme="dark"] .note mark { background: rgba(250, 204, 21, 0.32); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .note mark { background: rgba(250, 204, 21, 0.32); } }
 .note a.wikilink:hover { text-decoration-color: var(--fg); }
 .note blockquote { margin: 0.4em 0; padding: 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
 .note pre { background: var(--bg2); padding: 10px 12px; border-radius: 6px; overflow: auto; font-size: 0.92em; }

@@ -77,9 +77,12 @@ function Workspace({ email }: { email: string }) {
     return () => window.removeEventListener('popstate', on)
   }, [])
 
+  const newNoteRef = useRef<() => void>(() => {})
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'o')) { e.preventDefault(); setSidebar(true); setSearchOpen(true) }
+      // Ctrl+N (Alt+N where the browser keeps Ctrl+N for a new window)
+      if (e.code === 'KeyN' && !e.metaKey && !e.shiftKey && (e.ctrlKey !== e.altKey)) { e.preventDefault(); newNoteRef.current() }
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
@@ -132,6 +135,21 @@ function Workspace({ email }: { email: string }) {
     return createLocal(title).title
   }, [createLocal, getPage])
   const newNote = useCallback(() => openMain(createUntitled()), [createUntitled, openMain])
+  newNoteRef.current = newNote
+
+  // a shared link (?vault=…&open=Title) opens that note once, then the address is tidied
+  const { vaults } = useStore()
+  const sharedOpen = useRef(new URLSearchParams(location.search))
+  useEffect(() => {
+    const q = sharedOpen.current
+    const title = q.get('open')
+    if (!title || !vaults.length) return
+    const v = q.get('vault')
+    sharedOpen.current = new URLSearchParams()
+    history.replaceState(null, '', location.pathname + location.hash)
+    if (v && vaults.some(x => x.id === v) && v !== vault?.id) openInVault(v, title)
+    else setPanes([title])
+  }, [vaults, vault, openInVault])
   const newNoteBeside = useCallback((i: number) => openBeside(i, createUntitled()), [createUntitled, openBeside])
 
   const cycleTheme = () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, X } from 'lucide-react'
+import { ExternalLink, Pencil, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { githubStatus, republishVault, vaultSlug } from '../lib/publish'
 import type { Vault } from '../lib/types'
@@ -11,15 +11,19 @@ interface Props {
 }
 
 /** Confirm a vault rename; a vault that is already on the site is republished under its new address. */
-export function RenameVaultDialog({ vault, name, onClose }: Props) {
-  const { vaults, updateVault, pagesIn } = useStore()
+export function RenameVaultDialog({ vault: initial, name, onClose }: Props) {
+  const { vaults, updateVault, pagesIn, reload } = useStore()
+  // read the vault from the store, not the snapshot taken when the menu was clicked
+  const vault = vaults.find(v => v.id === initial.id) ?? initial
   const [stage, setStage] = useState<'ask' | 'saving' | 'publishing' | 'done'>('ask')
   const [err, setErr] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [newUrl, setNewUrl] = useState<string | null>(null)
 
   const oldSlug = vault.published_slug ?? vaultSlug(vault)
   const newSlug = vaultSlug({ name })
-  const onSite = vault.kind === 'public' && !!vault.published_slug
+  // on the site = published at least once (the folder name is only recorded since vault folders arrived)
+  const onSite = vault.kind === 'public' && !!(vault.published_slug || vault.published_at)
   const clash = vaults.find(v => v.id !== vault.id && vaultSlug(v) === newSlug)
   const busy = stage === 'saving' || stage === 'publishing'
 
@@ -41,7 +45,9 @@ export function RenameVaultDialog({ vault, name, onClose }: Props) {
       if (!gh.configured) { setNote('Renamed. GitHub publishing isn’t set up, so the site wasn’t updated.'); setStage('done'); return }
       setStage('publishing')
       const r = await republishVault(renamed, pagesIn(vault.id), vaults.map(v => v.id === vault.id ? renamed : v))
-      setNote(r.unchanged ? 'Renamed. The site was already up to date.' : `Renamed and republished at ${r.vaultUrl}`)
+      setNote(r.unchanged ? 'Renamed. The site was already up to date.' : 'Renamed and republished.')
+      setNewUrl(r.vaultUrl)
+      await reload()
       setStage('done')
     } catch (e) {
       setErr((e as Error).message)
@@ -70,7 +76,7 @@ export function RenameVaultDialog({ vault, name, onClose }: Props) {
             {err && <span className="err-text">{err}</span>}
             {stage === 'saving' && <span className="muted small">Renaming…</span>}
             {stage === 'publishing' && <span className="muted small">Republishing…</span>}
-            {stage === 'done' && <span className="pub-done">{note ?? 'Renamed.'}</span>}
+            {stage === 'done' && <span className="pub-done">{note ?? 'Renamed.'}{newUrl && <> <a href={newUrl} target="_blank" rel="noopener">{newUrl.replace(/^https?:\/\//, '')} <ExternalLink size={11} /></a></>}</span>}
           </div>
           <div className="pub-actions">
             {stage === 'done'

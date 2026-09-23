@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
-import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, Globe, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, Globe, MessageSquare, MessageSquareOff, Share, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
+import { planSite } from '../lib/publish'
+import { copyText, toast } from '../lib/toast'
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
@@ -34,7 +36,7 @@ function rectAnchor(el: Element | null) {
 
 /** One page: title, the editor, margin comments, backlinks. */
 export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
-  const { getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId } = useStore()
+  const { pages, pagesIn, getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
@@ -104,6 +106,31 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
 
   const linkedFrom = useMemo(() => (backlinks.get(normTitle(title)) ?? []).map(id => byId.get(id)!).filter(p => p && p.title !== title), [backlinks, byId, title])
   const words = useMemo(() => plainText(body, 0).split(/\s+/).filter(Boolean).length, [body])
+  // notes offered by the [[ picker: this vault, most recently edited first
+  const linkable = useMemo(() => pages
+    .filter(p => !p.local && p.kind !== 'canvas' && p.title !== title)
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .map(p => p.title), [pages, title])
+
+  /** Copy a link to this note: its public address if the vault is on the site, otherwise a link into the app. */
+  const share = async () => {
+    if (!page || !vault) return
+    let url = '', detail: string | undefined
+    if (vault.kind === 'public' && vault.published_slug && vault.site_url) {
+      const s = planSite(pagesIn(vault.id)).included.find(x => x.page.id === page.id)
+      if (s) {
+        url = `${vault.site_url.replace(/\/?$/, '/')}${vault.published_slug}/${s.path}/`
+        const since = vault.published_at && page.created_at > vault.published_at
+        detail = since ? 'Publish the vault for this link to work' : url.replace(/^https?:\/\//, '')
+      }
+    }
+    if (!url) {
+      url = `${location.origin}${location.pathname}?vault=${vault.id}&open=${encodeURIComponent(page.title)}`
+      detail = vault.kind === 'public' ? 'Opens in your journal — this note isn’t on your site yet' : 'Opens in your journal (private vault)'
+    }
+    try { await copyText(url); toast('Link to this note copied', detail) }
+    catch { toast('Couldn’t copy the link') }
+  }
 
   const commitTitle = async () => {
     const next = titleText.replace(/\s+/g, ' ').trim()
@@ -152,6 +179,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
           )}
           {page && !page.local && vaults.length > 1 && <CopyToVault page={page} onOpenCopy={onOpenInVault} />}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
+          {page && !page.local && <button className="icon-btn" title="Copy link to this note" onClick={share}><Share size={16} /></button>}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}
           {onClose && <button className="icon-btn" title="Close" onClick={onClose}><X size={18} /></button>}
@@ -160,7 +188,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
 
       <div ref={scrollRef} className={'pane-scroll' + (showComments ? '' : ' comments-hidden')}>
         <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
-          onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} pickDate={pickDate}
+          onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
           comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus} />
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />

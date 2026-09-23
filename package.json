@@ -11,11 +11,13 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
     "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-highlight": "^3.31.3",
     "@tiptap/extension-youtube": "^3.31.3",
     "@tiptap/extensions": "^3.31.3",
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
+    "@tiptap/suggestion": "^3.31.3",
     "@xyflow/react": "^12.8.0",
     "dompurify": "^3.2.6",
     "fflate": "^0.8.3",

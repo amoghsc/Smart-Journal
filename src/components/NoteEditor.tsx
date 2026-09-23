@@ -2,12 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
-import { Bold, Italic, MessageSquarePlus, Unlink } from 'lucide-react'
+import { Bold, Check, Highlighter, Italic, Link2, Link2Off, MessageSquarePlus, Plus, Unlink } from 'lucide-react'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
+import Highlight from '@tiptap/extension-highlight'
 import Youtube from '@tiptap/extension-youtube'
+import type { SuggestionProps } from '@tiptap/suggestion'
 import { EditorKeys, SwallowTab, Wikilink } from '../lib/wikilink'
+import { WikilinkSuggest, matchTitles, type SuggestItem } from '../lib/wikilinkSuggest'
 import { Comment } from '../lib/comment'
+import { isDailyTitle, prettyDate } from '../lib/links'
 
 interface Props {
   html: string
@@ -16,6 +20,8 @@ interface Props {
   onCreatePage: (title: string) => void
   /** Canonical title of an existing page for the typed text (case-insensitive), else the text itself. */
   resolveTitle: (title: string) => string
+  /** Notes that can be linked with `[[`, most recently edited first. */
+  titles: string[]
   pickDate: (anchor?: { x: number; y: number }) => Promise<string | null>
   /** Offer "comment" in the selection menu. */
   comments?: boolean
@@ -46,13 +52,25 @@ function unlinkElement(view: EditorView, el: HTMLElement) {
   view.focus()
 }
 
+/** "example.com/x" → "https://example.com/x"; keeps mailto:, tel: and explicit schemes. */
+function normaliseUrl(raw: string): string | null {
+  const s = raw.trim()
+  if (!s) return null
+  if (/^(https?:|mailto:|tel:)/i.test(s)) return s
+  if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s)) return `https://${s}`
+  return null
+}
+
+interface SuggestState { items: SuggestItem[]; index: number; rect: DOMRect | null; command: (item: SuggestItem) => void }
+
 /** Single-surface editor: what you type is what you see. Bullets, numbering, links, [[wikilinks]], comments, YouTube paste. */
-export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, pickDate, comments, onAddComment, onReady, autoFocus }: Props) {
+export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus }: Props) {
   // latest callbacks, readable from editor options that are captured once
   const open = useRef(onOpenLink); open.current = onOpenLink
   const create = useRef(onCreatePage); create.current = onCreatePage
   const change = useRef(onChange); change.current = onChange
   const resolve = useRef(resolveTitle); resolve.current = resolveTitle
+  const titlesRef = useRef(titles); titlesRef.current = titles
   const date = useRef(pickDate); date.current = pickDate
   const ready = useRef(onReady); ready.current = onReady
 
@@ -64,6 +82,19 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const scheduleHide = () => { clearHide(); hideTimer.current = window.setTimeout(() => setHoverLink(null), 250) }
   const clearPress = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null } }
 
+  // external link field inside the selection menu
+  const [linkMode, setLinkMode] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+  const [linkErr, setLinkErr] = useState(false)
+  const openLinkField = useRef<() => void>(() => {})
+
+  // [[ picker
+  const [suggest, setSuggest] = useState<SuggestState | null>(null)
+  const suggestRef = useRef<SuggestState | null>(null)
+  const setSuggestBoth = (s: SuggestState | null) => { suggestRef.current = s; setSuggest(s) }
+  const fromProps = (p: SuggestionProps<SuggestItem>, index = 0): SuggestState =>
+    ({ items: p.items, index: Math.min(index, Math.max(0, p.items.length - 1)), rect: p.clientRect?.() ?? null, command: p.command })
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -71,9 +102,31 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         // openOnClick off: its handler would also fire on wikilinks; external links are handled in handleClick below
         link: { openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { rel: 'noopener' } },
       }),
-      Placeholder.configure({ placeholder: 'Write… "- " for bullets, "1. " for numbers, select a word and press [[ to link' }),
+      Placeholder.configure({ placeholder: 'Write… "- " for bullets, "1. " for numbers, [[ to link a note' }),
+      Highlight,
       Youtube.configure({ nocookie: true, width: 480, height: 270 }),
       Wikilink.configure({ resolve: t => resolve.current(t), onCreate: t => create.current(t), pickDate: a => date.current(a) }),
+      WikilinkSuggest.configure({
+        items: ({ query }) => matchTitles(titlesRef.current, query),
+        command: ({ editor, range, props }) => {
+          const title = resolve.current(props.title)
+          create.current(title)
+          editor.chain().focus().insertContentAt(range, [{ type: 'wikilink', attrs: { title } }, { type: 'text', text: ' ' }]).run()
+        },
+        render: () => ({
+          onStart: p => setSuggestBoth(fromProps(p)),
+          onUpdate: p => setSuggestBoth(fromProps(p)),
+          onExit: () => setSuggestBoth(null),
+          onKeyDown: ({ event }) => {
+            const s = suggestRef.current
+            if (!s || !s.items.length) return false
+            if (event.key === 'ArrowDown') { setSuggestBoth({ ...s, index: (s.index + 1) % s.items.length }); return true }
+            if (event.key === 'ArrowUp') { setSuggestBoth({ ...s, index: (s.index - 1 + s.items.length) % s.items.length }); return true }
+            if (event.key === 'Enter' || event.key === 'Tab') { s.command(s.items[s.index]); return true }
+            return false
+          },
+        }),
+      }),
       Comment,
       EditorKeys,
       SwallowTab,
@@ -82,6 +135,14 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     autofocus: autoFocus ? 'end' : false,
     editorProps: {
       attributes: { class: 'note', spellcheck: 'true' },
+      handleKeyDown: (view, event) => {
+        // ⌘K / Ctrl+K: link the selected words
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+          if (!view.state.selection.empty) openLinkField.current()
+          return true
+        }
+        return false
+      },
       handleClickOn: (_view, _pos, node) => {
         if (node.type.name !== 'wikilink') return false
         open.current(node.attrs.title)
@@ -115,6 +176,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       },
     },
     onUpdate: ({ editor }) => change.current(editor.getHTML()),
+    onSelectionUpdate: () => { setLinkMode(false); setLinkErr(false) },
   })
 
   useEffect(() => { ready.current?.(editor); return () => ready.current?.(null) }, [editor])
@@ -124,7 +186,32 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     if (editor && !editor.isFocused && editor.getHTML() !== html) editor.commands.setContent(html, { emitUpdate: false })
   }, [html, editor])
 
-  const active = useEditorState({ editor, selector: ({ editor: e }) => ({ bold: e?.isActive('bold') ?? false, italic: e?.isActive('italic') ?? false }) })
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: e }) => ({
+      bold: e?.isActive('bold') ?? false,
+      italic: e?.isActive('italic') ?? false,
+      highlight: e?.isActive('highlight') ?? false,
+      link: e?.isActive('link') ?? false,
+    }),
+  })
+
+  openLinkField.current = () => {
+    if (!editor) return
+    setLinkUrl((editor.getAttributes('link').href as string | undefined) ?? '')
+    setLinkErr(false)
+    setLinkMode(true)
+  }
+
+  const applyLink = () => {
+    if (!editor) return
+    const href = normaliseUrl(linkUrl)
+    if (!href) { setLinkErr(true); return }
+    editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
+    setLinkMode(false)
+  }
+  const removeLink = () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkMode(false) }
+  const cancelLink = () => { setLinkMode(false); editor?.commands.focus() }
 
   const addComment = () => {
     if (!editor) return
@@ -133,21 +220,56 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     onAddComment?.(id)
   }
 
+  const keep = (e: React.MouseEvent) => e.preventDefault()   // buttons must not steal the editor's selection
+  const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
+
+  // [[ picker position: under the caret, or above it near the bottom of the window
+  const suggestStyle = (() => {
+    const r = suggest?.rect
+    if (!r) return undefined
+    const below = r.bottom + 280 < window.innerHeight
+    return below ? { left: r.left, top: r.bottom + 6 } : { left: r.left, bottom: window.innerHeight - r.top + 6 }
+  })()
+
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => !state.selection.empty && e.isEditable}>
-          <div className="bubble-row">
-            <button className={active?.bold ? 'on' : ''} title="Bold (⌘B)" onMouseDown={e => e.preventDefault()} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
-            <button className={active?.italic ? 'on' : ''} title="Italic (⌘I)" onMouseDown={e => e.preventDefault()} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
-            {comments && <>
-              <span className="bubble-sep" />
-              <button title="Comment on this text" onMouseDown={e => e.preventDefault()} onClick={addComment}><MessageSquarePlus size={15} /></button>
-            </>}
-          </div>
+        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode) && e.isEditable}>
+          {linkMode ? (
+            <div className="bubble-row bubble-link">
+              <Link2 size={14} className="bubble-link-icon" />
+              <input autoFocus value={linkUrl} placeholder="Paste or type a link…" aria-label="Link address" className={linkErr ? 'bad' : ''}
+                onChange={e => { setLinkUrl(e.target.value); setLinkErr(false) }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyLink() } if (e.key === 'Escape') { e.preventDefault(); cancelLink() } }} />
+              <button title="Apply link" onMouseDown={keep} onClick={applyLink}><Check size={15} /></button>
+              {active?.link && <button title="Remove link" onMouseDown={keep} onClick={removeLink}><Link2Off size={15} /></button>}
+            </div>
+          ) : (
+            <div className="bubble-row">
+              <button className={active?.bold ? 'on' : ''} title="Bold (⌘B)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
+              <button className={active?.italic ? 'on' : ''} title="Italic (⌘I)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
+              <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
+              <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
+              {comments && <>
+                <span className="bubble-sep" />
+                <button title="Comment on this text" onMouseDown={keep} onClick={addComment}><MessageSquarePlus size={15} /></button>
+              </>}
+            </div>
+          )}
         </BubbleMenu>
       )}
       <EditorContent editor={editor} className="note-wrap" />
+      {suggest && suggest.items.length > 0 && suggestStyle && (
+        <ul className="suggest" style={suggestStyle} role="listbox" aria-label="Link a note">
+          {suggest.items.map((it, i) => (
+            <li key={(it.create ? '+' : '') + it.title} role="option" aria-selected={i === suggest.index} className={(i === suggest.index ? 'on' : '') + (it.create ? ' create' : '')}
+              onMouseDown={e => { e.preventDefault(); suggest.command(it) }}
+              onMouseEnter={() => setSuggestBoth({ ...suggest, index: i })}>
+              {it.create ? <><Plus size={13} /> New note “{it.title}”</> : label(it.title)}
+            </li>
+          ))}
+        </ul>
+      )}
       {hoverLink && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y - 30 }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
           <button onMouseDown={e => e.preventDefault()} onClick={() => { unlinkElement(editor.view, hoverLink.el); setHoverLink(null) }}><Unlink size={13} /><span>Unlink</span></button>

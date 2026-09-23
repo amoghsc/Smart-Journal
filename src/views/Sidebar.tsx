@@ -67,7 +67,7 @@ export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpe
         )}
         <span className="spacer" />
         <button className="icon-btn" title={searchOpen ? 'Close search' : 'Search'} onClick={() => onSearchOpen(!searchOpen)}>{searchOpen ? <X size={16} /> : <Search size={16} />}</button>
-        <button className="icon-btn" title="New note" onClick={onNew}><Plus size={16} /></button>
+        <button className="icon-btn new-note" title="New note (Ctrl+N)" onClick={onNew}><Plus size={20} strokeWidth={2.5} /></button>
       </div>
       <ul className="side-list">
         {!q && !hasToday && row(today, 'today')}

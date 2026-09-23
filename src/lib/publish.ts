@@ -1,5 +1,6 @@
 import { strToU8, zipSync } from 'fflate'
 import type { Page, Vault } from './types'
+import { supabase } from './supabase'
 import { isDailyTitle, normTitle, prettyDate } from './links'
 import { plainText } from './html'
 
@@ -29,8 +30,10 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 export function slugFor(title: string): string {
   const s = title.toLowerCase().normalize('NFKD')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim().replace(/\s+/g, '-').replace(/-+/g, '-')
+    .replace(/([a-z])\p{M}+/gu, '$1')          // café → cafe, but keep marks that other scripts need (मराठी)
+    .normalize('NFC')
+    .replace(/[^\p{L}\p{M}\p{N}\s-]/gu, '')
+    .trim().replace(/\s+/g, '-').replace(/-+/g, '-').slice(0, 120).replace(/-$/, '')
   return s || 'note'
 }
 
@@ -248,8 +251,8 @@ Deploy from a branch.
 Re-exporting replaces the files; upload again to update the site.
 `
 
-/** Full site as a map of path → file contents. */
-export function buildSite(plan: SitePlan, vault: Vault): Record<string, Uint8Array> {
+/** Full site as a map of path → file text. */
+export function buildSite(plan: SitePlan, vault: Vault): Record<string, string> {
   const byTitle = new Map(plan.included.map(s => [normTitle(s.page.title), s]))
 
   // backlinks among published notes only
@@ -263,20 +266,48 @@ export function buildSite(plan: SitePlan, vault: Vault): Record<string, Uint8Arr
     }
   }
 
-  const files: Record<string, Uint8Array> = {
-    'index.html': strToU8(homePage(plan, vault)),
-    'style.css': strToU8(STYLE),
-    '.nojekyll': strToU8(''),
-    'README.md': strToU8(README(vault.site_title || vault.name)),
+  const files: Record<string, string> = {
+    'index.html': homePage(plan, vault),
+    'style.css': STYLE,
+    '.nojekyll': '',
+    'README.md': README(vault.site_title || vault.name),
   }
-  for (const s of plan.included) files[`${s.path}/index.html`] = strToU8(notePage(s, byTitle, back.get(s.page.id) ?? [], vault))
-  if (vault.site_url) files['feed.xml'] = strToU8(feed(plan, vault, byTitle))
+  for (const s of plan.included) files[`${s.path}/index.html`] = notePage(s, byTitle, back.get(s.page.id) ?? [], vault)
+  if (vault.site_url) files['feed.xml'] = feed(plan, vault, byTitle)
   return files
+}
+
+export interface GitHubStatus { configured: boolean; repo: string | null; branch: string; siteUrl: string | null }
+export interface GitHubResult { commit: string; unchanged: boolean; repo: string; siteUrl: string; commitUrl: string }
+
+/** Errors from the function carry a JSON body with a readable message. */
+async function fnError(error: unknown): Promise<Error> {
+  const ctx = (error as { context?: Response }).context
+  if (ctx && typeof ctx.json === 'function') {
+    try { const b = await ctx.json(); if (b?.error) return new Error(b.error) } catch { /* not JSON */ }
+  }
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+/** Is one-click publishing set up (token + repo held by the server)? Never returns the token. */
+export async function githubStatus(): Promise<GitHubStatus> {
+  const { data, error } = await supabase.functions.invoke('nt-publish', { body: { action: 'status' } })
+  if (error) throw await fnError(error)
+  return data as GitHubStatus
+}
+
+/** Send the built site to the server, which commits it to the configured repo. The browser never sees the token. */
+export async function publishToGitHub(plan: SitePlan, vault: Vault): Promise<GitHubResult> {
+  const files = buildSite(plan, vault)
+  const { data, error } = await supabase.functions.invoke('nt-publish', { body: { vault_id: vault.id, files } })
+  if (error) throw await fnError(error)
+  return data as GitHubResult
 }
 
 /** Build the site and hand the browser a .zip download. */
 export function downloadSite(plan: SitePlan, vault: Vault): number {
-  const files = buildSite(plan, vault)
+  const text = buildSite(plan, vault)
+  const files = Object.fromEntries(Object.entries(text).map(([k, v]) => [k, strToU8(v)]))
   const zip = zipSync(files, { level: 6 })
   const blob = new Blob([zip as BlobPart], { type: 'application/zip' })
   const url = URL.createObjectURL(blob)

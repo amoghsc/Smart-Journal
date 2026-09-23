@@ -285,7 +285,7 @@ p.small { margin: 0; line-height: 1.45; }
 .pub-details summary:hover { color: var(--fg); }
 .pub-details p { margin: 8px 0; }
 .modal-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
-.pub-done { font-size: 13px; color: var(--ok, #2a9d63); }
+.pub-done { font-size: 13px; color: #2a9d63; }
 
 /* backlinks */
 .backlinks { flex: none; border-top: 1px solid var(--line); padding: 12px var(--gutter) 20px; }
@@ -300,3 +300,14 @@ p.small { margin: 0; line-height: 1.45; }
   .panes, .panes[data-count="1"] { --gutter: 16px; }
   .pane-head { padding-top: 8px; }
 }
+
+/* publish: target + footer */
+.pub-target { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13.5px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px; }
+.pub-target a { color: var(--fg); font-weight: 500; }
+.pub-secure { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.pub-secure svg { color: #2a9d63; }
+.pub-last { margin: 0 0 14px 2px; }
+.err-text { color: var(--bad); font-size: 13px; }
+.pub-status { flex: 1; min-width: 0; font-size: 13px; }
+.pub-status a { color: inherit; }
+.pub-actions { display: flex; gap: 8px; flex: none; }

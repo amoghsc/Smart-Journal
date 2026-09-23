@@ -10,6 +10,8 @@ export interface Vault {
   site_description: string | null
   site_author: string | null
   site_url: string | null
+  published_at?: string | null
+  published_commit?: string | null
   sort_order: number
   created_at: string
 }

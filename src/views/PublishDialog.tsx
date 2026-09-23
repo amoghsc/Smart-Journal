@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
-import { Download, Globe, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Download, ExternalLink, GitBranch, Globe, ShieldCheck, Upload, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { downloadSite, planSite } from '../lib/publish'
+import { downloadSite, githubStatus, planSite, publishToGitHub, type GitHubResult, type GitHubStatus } from '../lib/publish'
 import { isDailyTitle, prettyDate } from '../lib/links'
 import type { Vault } from '../lib/types'
 
@@ -10,7 +10,15 @@ interface Props {
   onClose: () => void
 }
 
-/** Review exactly what will go public, then export the site. Nothing leaves without this step. */
+function ago(iso: string): string {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)} min ago`
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** Review exactly what will go public, then publish to GitHub (or export a zip). Nothing leaves without this step. */
 export function PublishDialog({ vault, onClose }: Props) {
   const { pagesIn, updateVault } = useStore()
   const [site, setSite] = useState({
@@ -19,19 +27,43 @@ export function PublishDialog({ vault, onClose }: Props) {
     site_author: vault.site_author ?? '',
     site_url: vault.site_url ?? '',
   })
-  const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState<number | null>(null)
+  const [gh, setGh] = useState<GitHubStatus | null>(null)
+  const [ghErr, setGhErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'github' | 'zip' | null>(null)
+  const [result, setResult] = useState<GitHubResult | null>(null)
+  const [zipped, setZipped] = useState<number | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    githubStatus()
+      .then(s => {
+        setGh(s)
+        // the RSS feed needs an absolute address; default to the Pages URL
+        if (s.siteUrl) setSite(v => v.site_url ? v : { ...v, site_url: s.siteUrl! })
+      })
+      .catch(e => setGhErr((e as Error).message))
+  }, [])
 
   const plan = useMemo(() => planSite(pagesIn(vault.id)), [pagesIn, vault.id])
   const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
 
-  const publish = async () => {
-    setBusy(true)
+  const toGitHub = async () => {
+    setBusy('github'); setErr(null); setResult(null)
     try {
       await updateVault(vault.id, site)
-      setDone(downloadSite(plan, { ...vault, ...site }))
-    } catch (e) { alert((e as Error).message) } finally { setBusy(false) }
+      setResult(await publishToGitHub(plan, { ...vault, ...site }))
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
+
+  const toZip = async () => {
+    setBusy('zip'); setErr(null)
+    try {
+      await updateVault(vault.id, site)
+      setZipped(downloadSite(plan, { ...vault, ...site }))
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
+  }
+
+  const ready = gh?.configured
 
   return (
     <div className="modal-bg" onMouseDown={onClose}>
@@ -42,10 +74,22 @@ export function PublishDialog({ vault, onClose }: Props) {
         </div>
 
         <div className="publish-body">
+          <div className="pub-target">
+            {gh === null && !ghErr && <span className="muted">Checking GitHub…</span>}
+            {ghErr && <span className="err-text">Could not reach the publisher: {ghErr}</span>}
+            {gh && ready && <>
+              <GitBranch size={15} />
+              <span>Publishes to <a href={`https://github.com/${gh.repo}`} target="_blank" rel="noopener">{gh.repo}</a></span>
+              <span className="pub-secure" title="The GitHub token is held by the server and never reaches this browser. Only this repo can be written, only by you."><ShieldCheck size={14} /> token held server-side</span>
+            </>}
+            {gh && !ready && <span className="muted">GitHub publishing isn’t set up yet — you can still export a zip.</span>}
+          </div>
+          {vault.published_at && <p className="muted small pub-last">Last published {ago(vault.published_at)}</p>}
+
           <div className="pub-fields">
             <label>Site title<input value={site.site_title} onChange={e => setSite({ ...site, site_title: e.target.value })} /></label>
             <label>Description<input value={site.site_description} placeholder="One line under the title" onChange={e => setSite({ ...site, site_description: e.target.value })} /></label>
-            <label>Site address<input value={site.site_url} placeholder="https://notes.example.com — needed for the RSS feed" onChange={e => setSite({ ...site, site_url: e.target.value })} /></label>
+            <label>Site address<input value={site.site_url} placeholder="https://notes.example.com — used for the RSS feed" onChange={e => setSite({ ...site, site_url: e.target.value })} /></label>
           </div>
 
           <div className="pub-summary">
@@ -76,19 +120,30 @@ export function PublishDialog({ vault, onClose }: Props) {
           {plan.unresolved.length > 0 && (
             <details className="pub-details">
               <summary>{plan.unresolved.length} {plan.unresolved.length === 1 ? 'link becomes' : 'links become'} plain text</summary>
-              <p className="muted small">These notes link to pages that are not being published, so the links render as ordinary words — no broken links, and the titles of unpublished notes stay private.</p>
+              <p className="muted small">These notes link to pages that are not being published, so the links render as ordinary words — no broken links, and no link into anything unpublished.</p>
               <ul className="pub-list">{plan.unresolved.map(t => <li key={t}><span className="pub-title">{t}</span></li>)}</ul>
             </details>
           )}
         </div>
 
         <div className="modal-foot">
-          {done !== null
-            ? <span className="pub-done">Downloaded — {done} files. Upload the folder's contents to your host.</span>
-            : <span className="muted small">Exports a plain HTML folder. Nothing is uploaded anywhere.</span>}
-          <button className="btn primary" onClick={publish} disabled={busy || !plan.included.length}>
-            <Download size={15} /> {busy ? 'Building…' : done !== null ? 'Export again' : 'Export site'}
-          </button>
+          <div className="pub-status">
+            {err && <span className="err-text">{err}</span>}
+            {!err && result && (result.unchanged
+              ? <span className="muted small">Nothing changed since the last publish.</span>
+              : <span className="pub-done">Published · <a href={result.commitUrl} target="_blank" rel="noopener">commit {result.commit.slice(0, 7)}</a> · <a href={result.siteUrl} target="_blank" rel="noopener">view site <ExternalLink size={11} /></a></span>)}
+            {!err && !result && zipped !== null && <span className="pub-done">Downloaded {zipped} files.</span>}
+          </div>
+          <div className="pub-actions">
+            <button className="btn" onClick={toZip} disabled={!!busy || !plan.included.length} title="Download a folder you can upload anywhere">
+              <Download size={15} /> {busy === 'zip' ? 'Building…' : 'Zip'}
+            </button>
+            {ready && (
+              <button className="btn primary" onClick={toGitHub} disabled={!!busy || !plan.included.length}>
+                <Upload size={15} /> {busy === 'github' ? 'Publishing…' : 'Publish'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

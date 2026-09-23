@@ -4,7 +4,7 @@ import { prettyDate } from './links'
 import { icon } from './readerIcons'
 
 /**
- * The published reader: the app's own layout (top bar, sidebar with filter + search, note pane,
+ * The published reader: the app's own layout (top bar, sidebar with search, note pane,
  * backlinks) as static, read-only pages. Visual values mirror src/index.css — keep them in step.
  */
 
@@ -26,16 +26,12 @@ function sidebar(ctx: ReaderCtx, prefix: string, current: string | null): string
   // same order as the app's "all notes" view: most recently edited first
   const rows = [...ctx.plan.included]
     .sort((a, b) => b.page.updated_at.localeCompare(a.page.updated_at))
-    .map((s, i) => `<li data-i="${i}" data-daily="${s.daily ? 1 : 0}" data-date="${s.daily ? s.page.title : ''}" data-path="${esc(s.path)}"${s.page.id === current ? ' class="on"' : ''}><a class="row-label${s.daily ? ' daily' : ''}" href="${prefix}${s.path}/" title="${esc(s.page.title)}">${esc(label(s))}</a></li>`)
+    .map(s => `<li data-path="${esc(s.path)}"${s.page.id === current ? ' class="on"' : ''}><a class="row-label${s.daily ? ' daily' : ''}" href="${prefix}${s.path}/" title="${esc(s.page.title)}">${esc(label(s))}</a></li>`)
     .join('')
   return `<aside class="side-col"><nav class="side" aria-label="Notes">
   <div class="side-head">
-    <div class="seg">
-      <button class="on" data-filter="all" title="All notes" aria-label="All notes">${icon('list', 15)}</button>
-      <button data-filter="daily" title="Daily notes" aria-label="Daily notes">${icon('calendar', 15)}</button>
-    </div>
+    <span class="side-title">Notes</span>
     <input class="side-search" type="search" placeholder="Search notes" aria-label="Search notes" hidden>
-    <span class="spacer"></span>
     <button class="icon-btn" data-action="search" title="Search" aria-label="Search">${icon('search', 16)}</button>
   </div>
   <ul class="side-list">${rows}<li class="empty" hidden>No matches</li></ul>
@@ -186,7 +182,8 @@ input[type=search]::-webkit-search-cancel-button { display: none; }
 .side-head { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 6px 6px 12px; height: 42px; }
 .side-head .spacer { flex: 1; }
 .side-head input { flex: 1; min-width: 0; font-size: 14px; }
-.searching .seg, .searching .spacer { display: none; }
+.side-title { flex: 1; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.searching .side-title { display: none; }
 .seg { display: inline-flex; gap: 1px; background: var(--bg3); border-radius: 6px; padding: 2px; }
 .seg button { width: 28px; height: 24px; border-radius: 4px; display: grid; place-items: center; color: var(--muted); }
 .seg button.on { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
@@ -261,7 +258,6 @@ export const READER_JS = `(function () {
   var rows = [].slice.call(list.querySelectorAll('li[data-path]'))
   var narrow = window.matchMedia('(max-width: 800px)')
   var SUN = ${JSON.stringify(icon('sun'))}, MOON = ${JSON.stringify(icon('moon'))}
-  var get = function (k) { try { return localStorage.getItem(k) } catch (e) { return null } }
   var set = function (k, v) { try { localStorage.setItem(k, v) } catch (e) {} }
 
   // theme: follows the system until the reader picks one
@@ -271,8 +267,8 @@ export const READER_JS = `(function () {
   paint()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint)
 
-  // sidebar filter (all / daily) and search
-  var filter = get('sj-filter') === 'daily' ? 'daily' : 'all', q = '', index = null
+  // sidebar search (titles, then note text once the index has loaded)
+  var q = '', index = null
   var loadIndex = function () {
     if (index) return
     index = {}
@@ -282,20 +278,15 @@ export const READER_JS = `(function () {
   }
   var apply = function () {
     var shown = 0
-    var order = filter === 'daily'
-      ? rows.slice().sort(function (a, b) { return b.dataset.date.localeCompare(a.dataset.date) })
-      : rows.slice().sort(function (a, b) { return a.dataset.i - b.dataset.i })
-    order.forEach(function (li) {
-      var ok = (filter === 'all' || li.dataset.daily === '1')
-      if (ok && q) {
+    rows.forEach(function (li) {
+      var ok = true
+      if (q) {
         var t = li.textContent.toLowerCase(), x = index && index[li.dataset.path]
         ok = t.indexOf(q) >= 0 || (!!x && x.indexOf(q) >= 0)
       }
       li.hidden = !ok; if (ok) shown++
-      list.insertBefore(li, empty)
     })
     empty.hidden = shown > 0 || !q
-    side.querySelectorAll('[data-filter]').forEach(function (b) { b.classList.toggle('on', b.dataset.filter === filter) })
   }
   var openSearch = function (open) {
     side.classList.toggle('searching', open); input.hidden = !open
@@ -312,8 +303,6 @@ export const READER_JS = `(function () {
   var on = list.querySelector('li.on'); if (on) on.scrollIntoView({ block: 'nearest' })
 
   document.addEventListener('click', function (e) {
-    var f = e.target.closest('[data-filter]')
-    if (f) { filter = f.dataset.filter; set('sj-filter', filter); apply(); return }
     var a = e.target.closest('[data-action]'); if (!a) return
     var act = a.dataset.action
     if (act === 'theme') { var next = isDark() ? 'light' : 'dark'; root.dataset.theme = next; set('sj-theme', next); paint() }

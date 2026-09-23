@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
-import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, FolderInput, Globe, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, Globe, MessageSquare, MessageSquareOff, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
+import { MoveToVault } from '../components/MoveToVault'
 import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../lib/links'
 import { plainText } from '../lib/html'
 
@@ -31,7 +32,7 @@ function rectAnchor(el: Element | null) {
 
 /** One page: title, the editor, margin comments, backlinks. */
 export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
-  const { getPage, setBody, ensurePage, renamePage, deletePage, setDraft, movePage, vault, vaults, backlinks, byId } = useStore()
+  const { getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
@@ -41,6 +42,26 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
   const [editor, setEditor] = useState<Editor | null>(null)
   const [showComments, setShowComments] = useState(() => localStorage.getItem('comments') !== '0')
   const [focusComment, setFocusComment] = useState<string | null>(null)
+  // backlinks height: null = grows with its content (capped); a number once the user drags the divider
+  const [blHeight, setBlHeight] = useState<number | null>(() => { const v = Number(localStorage.getItem('backlinks-h')); return v > 0 ? v : null })
+  const paneRef = useRef<HTMLDivElement>(null)
+  const blRef = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ y: number; h: number } | null>(null)
+  const onDividerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { y: e.clientY, h: blRef.current?.offsetHeight ?? 0 }
+  }
+  const onDividerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return
+    const max = (paneRef.current?.clientHeight ?? 600) * 0.8
+    setBlHeight(Math.round(Math.min(max, Math.max(56, drag.current.h - (e.clientY - drag.current.y)))))
+  }
+  const onDividerUp = () => {
+    if (!drag.current) return
+    drag.current = null
+    setBlHeight(h => { if (h) localStorage.setItem('backlinks-h', String(h)); return h })
+  }
+  const resetBacklinks = () => { setBlHeight(null); localStorage.removeItem('backlinks-h') }
 
   useEffect(() => setTitleText(title), [title])
   // the title wraps: size the textarea to its content, and again whenever its width changes
@@ -90,17 +111,6 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
     catch (e) { alert((e as Error).message); setTitleText(title) }
   }
 
-  const move = async () => {
-    if (!page) return
-    const others = vaults.filter(v => v.id !== page.vault_id)
-    if (!others.length) return
-    const pick = others.length === 1 ? others[0]
-      : others.find(v => v.name === window.prompt(`Move “${page.title}” to which vault?\n\n${others.map(v => v.name).join('\n')}`, others[0].name)?.trim())
-    if (!pick) return
-    if (!confirm(`Move “${page.title}” to “${pick.name}”?${pick.kind === 'public' ? '\n\nThat vault can be published.' : ''}`)) return
-    try { await movePage(page.id, pick.id); onNavigate(todayTitle()) } catch (e) { alert((e as Error).message) }
-  }
-
   const remove = async () => {
     if (!page) return
     if (!confirm(`Delete “${page.title}”?`)) return
@@ -109,7 +119,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
   }
 
   return (
-    <div className={'pane' + (closing ? ' closing' : '')}>
+    <div ref={paneRef} className={'pane' + (closing ? ' closing' : '')}>
       <div className="pane-head">
         {daily ? (
           <div className="daily-nav">
@@ -138,7 +148,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
               {page.draft ? <EyeOff size={16} /> : <Globe size={16} />}
             </button>
           )}
-          {page && vaults.length > 1 && <button className="icon-btn" title="Move to another vault" onClick={move}><FolderInput size={16} /></button>}
+          {page && !page.local && vaults.length > 1 && <MoveToVault page={page} linkedFrom={linkedFrom.length} onMoved={() => onNavigate(todayTitle())} />}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}
@@ -153,21 +163,23 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
         )}
-
-        {linkedFrom.length > 0 && (
-          <div className="backlinks">
-            <h3>Linked from</h3>
-            <ul>
-              {linkedFrom.map(p => (
-                <li key={p.id} onClick={() => onOpenLink(p.title)}>
-                  <span className="bl-title">{isDailyTitle(p.title) ? prettyDate(p.title, true) : p.title}</span>
-                  <span className="bl-snippet">{plainText(p.body, 120)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
+
+      {linkedFrom.length > 0 && <>
+        <div className="bl-divider" role="separator" aria-orientation="horizontal" title="Drag to resize · double-click to reset"
+          onPointerDown={onDividerDown} onPointerMove={onDividerMove} onPointerUp={onDividerUp} onPointerCancel={onDividerUp} onDoubleClick={resetBacklinks} />
+        <div ref={blRef} className={'backlinks' + (blHeight == null ? ' auto' : '')} style={blHeight == null ? undefined : { height: blHeight }}>
+          <h3>Linked from <span className="bl-count">{linkedFrom.length}</span></h3>
+          <ul>
+            {linkedFrom.map(p => (
+              <li key={p.id} onClick={() => onOpenLink(p.title)}>
+                <span className="bl-title">{isDailyTitle(p.title) ? prettyDate(p.title, true) : p.title}</span>
+                <span className="bl-snippet">{plainText(p.body, 120)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </>}
     </div>
   )
 }

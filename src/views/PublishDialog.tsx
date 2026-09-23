@@ -25,7 +25,6 @@ export function PublishDialog({ vault, onClose }: Props) {
     site_title: vault.site_title ?? vault.name,
     site_description: vault.site_description ?? '',
     site_author: vault.site_author ?? '',
-    site_url: vault.site_url ?? '',
   })
   const [gh, setGh] = useState<GitHubStatus | null>(null)
   const [ghErr, setGhErr] = useState<string | null>(null)
@@ -38,8 +37,6 @@ export function PublishDialog({ vault, onClose }: Props) {
     githubStatus()
       .then(s => {
         setGh(s)
-        // the RSS feed needs an absolute address; default to the Pages URL
-        if (s.siteUrl) setSite(v => v.site_url ? v : { ...v, site_url: s.siteUrl! })
       })
       .catch(e => setGhErr((e as Error).message))
   }, [])
@@ -50,20 +47,22 @@ export function PublishDialog({ vault, onClose }: Props) {
   const toGitHub = async () => {
     setBusy('github'); setErr(null); setResult(null)
     try {
-      await updateVault(vault.id, site)
-      setResult(await publishToGitHub(plan, { ...vault, ...site }))
+      await updateVault(vault.id, settings())
+      setResult(await publishToGitHub(plan, { ...vault, ...settings() }))
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
 
   const toZip = async () => {
     setBusy('zip'); setErr(null)
     try {
-      await updateVault(vault.id, site)
-      setZipped(downloadSite(plan, { ...vault, ...site }))
+      await updateVault(vault.id, settings())
+      setZipped(downloadSite(plan, { ...vault, ...settings() }))
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
 
   const ready = gh?.configured
+  // absolute address for the RSS feed and canonical links: where GitHub serves the site
+  const settings = () => ({ ...site, site_url: gh?.siteUrl ?? vault.site_url ?? '' })
 
   return (
     <div className="modal-bg" onMouseDown={onClose}>
@@ -88,8 +87,7 @@ export function PublishDialog({ vault, onClose }: Props) {
 
           <div className="pub-fields">
             <label>Site title<input value={site.site_title} onChange={e => setSite({ ...site, site_title: e.target.value })} /></label>
-            <label>Description<input value={site.site_description} placeholder="One line under the title" onChange={e => setSite({ ...site, site_description: e.target.value })} /></label>
-            <label>Site address<input value={site.site_url} placeholder="https://notes.example.com — used for the RSS feed" onChange={e => setSite({ ...site, site_url: e.target.value })} /></label>
+            <label>Description<input value={site.site_description} placeholder="Shown under the title on the home page, and in search results" onChange={e => setSite({ ...site, site_description: e.target.value })} /></label>
           </div>
 
           <div className="pub-summary">

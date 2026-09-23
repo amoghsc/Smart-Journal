@@ -3,18 +3,22 @@ import type { Page, Vault } from './types'
 import { supabase } from './supabase'
 import { isDailyTitle, normTitle, prettyDate } from './links'
 import { plainText } from './html'
-import { READER_CSS, READER_JS, readerHomePage, readerNotePage, readerSearchIndex, type ReaderCtx } from './reader'
+import { READER_CSS, READER_JS, readerHomePage, readerLanding, readerNotePage, readerSearchIndex, type LandingVault, type ReaderCtx } from './reader'
 
 /**
- * Turns a vault into a static site: plain HTML, no JavaScript, relative links
+ * Turns a vault into a static site: plain HTML with a small optional script, relative links
  * throughout so the output works at a domain root or in any subfolder.
+ *
+ * Layout — each vault lives in its own folder, so vaults can share one site:
+ *   index.html, style.css, script.js         shared, at the site root
+ *   <vault>/index.html, search.json, feed.xml the vault's home, search index and RSS
+ *   <vault>/<note>/index.html                 each note (journal entries use the date)
  */
 
 export interface SitePage {
   page: Page
-  /** Published path, e.g. "notes/my-idea" or "journal/2026-09-22". */
+  /** Path inside the vault's folder, e.g. "my-idea" or "2026-09-22". */
   path: string
-  slug: string
   daily: boolean
 }
 
@@ -29,6 +33,7 @@ export interface SitePlan {
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+/** URL-safe name. The publisher (supabase/functions/nt-publish) has an identical copy — keep them in step. */
 export function slugFor(title: string): string {
   const s = title.toLowerCase().normalize('NFKD')
     .replace(/([a-z])\p{M}+/gu, '$1')          // café → cafe, but keep marks that other scripts need (मराठी)
@@ -37,6 +42,9 @@ export function slugFor(title: string): string {
     .trim().replace(/\s+/g, '-').replace(/-+/g, '-').slice(0, 120).replace(/-$/, '')
   return s || 'note'
 }
+
+/** The folder a vault publishes into. */
+export const vaultSlug = (v: Pick<Vault, 'name'>) => slugFor(v.name)
 
 /** Decide what goes out, before anything is generated, so the user can review it. */
 export function planSite(pages: Page[]): SitePlan {
@@ -57,10 +65,10 @@ export function planSite(pages: Page[]): SitePlan {
     if (!plainText(page.body, 0).trim()) { skipped.push({ page, reason: 'empty' }); continue }
 
     const daily = isDailyTitle(page.title)
-    let slug = daily ? page.title : slugFor(page.title)
-    if (used.has(slug)) { let n = 2; while (used.has(`${slug}-${n}`)) n++; slug = `${slug}-${n}` }
-    used.add(slug)
-    included.push({ page, slug, daily, path: `${daily ? 'journal' : 'notes'}/${slug}` })
+    let path = daily ? page.title : slugFor(page.title)
+    if (used.has(path)) { let n = 2; while (used.has(`${path}-${n}`)) n++; path = `${path}-${n}` }
+    used.add(path)
+    included.push({ page, daily, path })
   }
 
   const byTitle = new Map(included.map(s => [normTitle(s.page.title), s]))
@@ -76,8 +84,8 @@ export function planSite(pages: Page[]): SitePlan {
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html').body
 
-/** Note body → publishable HTML: comments removed, links resolved or flattened. */
-function renderBody(html: string, byTitle: Map<string, SitePage>, prefix: string): string {
+/** Note body → publishable HTML: comments removed, links resolved or flattened. `base` points at the vault folder. */
+function renderBody(html: string, byTitle: Map<string, SitePage>, base: string): string {
   const body = parse(html)
 
   // private annotations never leave the app
@@ -88,12 +96,12 @@ function renderBody(html: string, byTitle: Map<string, SitePage>, prefix: string
     const target = byTitle.get(normTitle(title))
     if (target) {
       const a = document.createElement('a')
-      a.setAttribute('href', `${prefix}${target.path}/`)
+      a.setAttribute('href', `${base}${target.path}/`)
       a.className = 'wikilink'
       a.textContent = el.textContent
       el.replaceWith(a)
     } else {
-      // a link to something unpublished becomes plain text: no broken link, no leaked title
+      // a link to something unpublished becomes plain text: no broken link, no link into anything private
       el.replaceWith(document.createTextNode(el.textContent ?? ''))
     }
   }
@@ -107,8 +115,8 @@ function renderBody(html: string, byTitle: Map<string, SitePage>, prefix: string
   return body.innerHTML
 }
 
-function feed(plan: SitePlan, site: Vault, byTitle: Map<string, SitePage>): string {
-  const base = (site.site_url || '').replace(/\/$/, '')
+function feed(plan: SitePlan, site: Vault, vaultUrl: string, byTitle: Map<string, SitePage>): string {
+  const base = vaultUrl.replace(/\/$/, '')
   const entries = plan.included.filter(s => s.daily).slice(0, 50)
   const items = entries.map(s => `  <item>
     <title>${esc(prettyDate(s.page.title))}</title>
@@ -127,28 +135,20 @@ ${items}
 `
 }
 
-const README = (site: string) => `# ${site}
+const README = `# Notes
 
-A static site exported from Smart Journal. Plain HTML — no build step, no JavaScript.
-
-## Publishing it
-
-**Any web host / cPanel / FTP:** upload the contents of this folder (not the folder
-itself) into your web root, or into a subfolder such as /notes. Relative links mean
-it works either way.
-
-**Netlify:** drag this folder onto https://app.netlify.com/drop
-
-**GitHub Pages:** commit these files to a repository, then Settings → Pages →
-Deploy from a branch.
-
-**Cloudflare Pages:** Create project → Direct upload → drop this folder.
-
-Re-exporting replaces the files; upload again to update the site.
+Static site published from Smart Journal. Plain HTML — no build step.
+Each folder is one vault; the files at the top level are shared.
 `
 
-/** Full site as a map of path → file text. */
-export function buildSite(plan: SitePlan, vault: Vault): Record<string, string> {
+/**
+ * The files for one vault, plus the shared root files.
+ * `others` are the other vaults already published to the same site (listed on the landing page).
+ */
+export function buildSite(plan: SitePlan, vault: Vault, others: LandingVault[] = []): Record<string, string> {
+  const slug = vaultSlug(vault)
+  const siteRoot = (vault.site_url || '').replace(/\/?$/, '/')
+  const vaultUrl = vault.site_url ? `${siteRoot}${slug}/` : ''
   const byTitle = new Map(plan.included.map(s => [normTitle(s.page.title), s]))
 
   // backlinks among published notes only
@@ -163,25 +163,37 @@ export function buildSite(plan: SitePlan, vault: Vault): Record<string, string> 
   }
 
   // rendered bodies, and their plain text (from the DOM, so comment bodies held in attributes never leak into excerpts)
-  const bodies = new Map(plan.included.map(s => [s.page.id, renderBody(s.page.body, byTitle, '../../')]))
+  const bodies = new Map(plan.included.map(s => [s.page.id, renderBody(s.page.body, byTitle, '../')]))
   const text = new Map([...bodies].map(([id, html]) => [id, (parse(html).textContent ?? '').replace(/\s+/g, ' ').trim()]))
-  const ctx: ReaderCtx = { site: vault, plan, text, backlinks: back }
+  const ctx: ReaderCtx = { site: vault, plan, text, backlinks: back, vaultUrl, build: Date.now().toString(36) }
 
+  const listed: LandingVault[] = [
+    { slug, title: vault.site_title || vault.name, description: vault.site_description ?? '' },
+    ...others.filter(o => o.slug !== slug),
+  ]
   const files: Record<string, string> = {
-    'index.html': readerHomePage(ctx),
+    'index.html': readerLanding(listed),
     'style.css': READER_CSS,
     'script.js': READER_JS,
-    'search.json': readerSearchIndex(ctx),
     '.nojekyll': '',
-    'README.md': README(vault.site_title || vault.name),
+    'README.md': README,
+    [`${slug}/index.html`]: readerHomePage(ctx),
+    [`${slug}/search.json`]: readerSearchIndex(ctx),
   }
-  for (const s of plan.included) files[`${s.path}/index.html`] = readerNotePage(s, bodies.get(s.page.id)!, ctx)
-  if (vault.site_url) files['feed.xml'] = feed(plan, vault, byTitle)
+  for (const s of plan.included) files[`${slug}/${s.path}/index.html`] = readerNotePage(s, bodies.get(s.page.id)!, ctx)
+  if (vaultUrl) files[`${slug}/feed.xml`] = feed(plan, vault, vaultUrl, byTitle)
   return files
 }
 
+/** Other public vaults already on the site, for the landing page. */
+export function publishedOthers(vaults: Vault[], except: string): LandingVault[] {
+  return vaults
+    .filter(v => v.kind === 'public' && v.id !== except && v.published_slug)
+    .map(v => ({ slug: v.published_slug!, title: v.site_title || v.name, description: v.site_description ?? '' }))
+}
+
 export interface GitHubStatus { configured: boolean; repo: string | null; branch: string; siteUrl: string | null }
-export interface GitHubResult { commit: string; unchanged: boolean; repo: string; siteUrl: string; commitUrl: string }
+export interface GitHubResult { commit: string; unchanged: boolean; repo: string; slug: string; siteUrl: string; vaultUrl: string; commitUrl: string }
 
 /** Errors from the function carry a JSON body with a readable message. */
 async function fnError(error: unknown): Promise<Error> {
@@ -200,14 +212,14 @@ export async function githubStatus(): Promise<GitHubStatus> {
 }
 
 /** Send the built site to the server, which commits it to the configured repo. The browser never sees the token. */
-export async function publishToGitHub(plan: SitePlan, vault: Vault): Promise<GitHubResult> {
-  const files = buildSite(plan, vault)
+export async function publishToGitHub(plan: SitePlan, vault: Vault, others: LandingVault[]): Promise<GitHubResult> {
+  const files = buildSite(plan, vault, others)
   const { data, error } = await supabase.functions.invoke('nt-publish', { body: { vault_id: vault.id, files } })
   if (error) throw await fnError(error)
   return data as GitHubResult
 }
 
-/** Build the site and hand the browser a .zip download. */
+/** Build the site and hand the browser a .zip download (this vault only). */
 export function downloadSite(plan: SitePlan, vault: Vault): number {
   const text = buildSite(plan, vault)
   const files = Object.fromEntries(Object.entries(text).map(([k, v]) => [k, strToU8(v)]))
@@ -216,8 +228,14 @@ export function downloadSite(plan: SitePlan, vault: Vault): number {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${slugFor(vault.site_title || vault.name)}-${new Date().toISOString().slice(0, 10)}.zip`
+  a.download = `${vaultSlug(vault)}-${new Date().toISOString().slice(0, 10)}.zip`
   document.body.appendChild(a); a.click(); a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
   return Object.keys(files).length
+}
+
+/** Publish a vault without the review dialog (used after renaming an already-published vault). */
+export async function republishVault(vault: Vault, pages: Page[], vaults: Vault[]): Promise<GitHubResult> {
+  const siteUrl = vault.site_url || (await githubStatus()).siteUrl || ''
+  return publishToGitHub(planSite(pages), { ...vault, site_url: siteUrl }, publishedOthers(vaults, vault.id))
 }

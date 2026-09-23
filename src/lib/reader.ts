@@ -4,8 +4,10 @@ import { prettyDate } from './links'
 import { icon } from './readerIcons'
 
 /**
- * The published reader: the app's own layout (top bar, sidebar with search, note pane,
- * backlinks) as static, read-only pages. Visual values mirror src/index.css — keep them in step.
+ * The published reader: the app's own layout (top bar, sidebar with search, note pane, backlinks)
+ * as static, read-only pages. Visual values mirror src/index.css — keep them in step.
+ *
+ * Paths: a note lives at <vault>/<note>/, so from a note `../` is the vault folder and `../../` the site root.
  */
 
 export interface ReaderCtx {
@@ -14,7 +16,14 @@ export interface ReaderCtx {
   /** Plain text of each published page, by page id (comments and markup removed). */
   text: Map<string, string>
   backlinks: Map<string, SitePage[]>
+  /** Absolute URL of the vault folder, or '' when unknown (zip export). */
+  vaultUrl: string
+  /** Changes on every publish; lets readers' cached pages from an older publish be dropped. */
+  build: string
 }
+
+/** A vault as listed on the site's landing page. */
+export interface LandingVault { slug: string; title: string; description: string }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const siteName = (v: Vault) => v.site_title || v.name
@@ -22,11 +31,11 @@ const label = (s: SitePage, long = false) => s.daily ? prettyDate(s.page.title, 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length
 const excerpt = (t: string, n: number) => t.length > n ? t.slice(0, n).trimEnd() + '…' : t
 
-function sidebar(ctx: ReaderCtx, prefix: string, current: string | null): string {
-  // same order as the app's "all notes" view: most recently edited first
+function sidebar(ctx: ReaderCtx, base: string, current: string | null): string {
+  // same order as the app's notes list: most recently edited first
   const rows = [...ctx.plan.included]
     .sort((a, b) => b.page.updated_at.localeCompare(a.page.updated_at))
-    .map(s => `<li data-path="${esc(s.path)}"${s.page.id === current ? ' class="on"' : ''}><a class="row-label${s.daily ? ' daily' : ''}" href="${prefix}${s.path}/" title="${esc(s.page.title)}">${esc(label(s))}</a></li>`)
+    .map(s => `<li data-path="${esc(s.path)}"${s.page.id === current ? ' class="on"' : ''}><a class="row-label${s.daily ? ' daily' : ''}" href="${base}${s.path}/" title="${esc(s.page.title)}">${esc(label(s))}</a></li>`)
     .join('')
   return `<aside class="side-col"><nav class="side" aria-label="Notes">
   <div class="side-head">
@@ -38,33 +47,39 @@ function sidebar(ctx: ReaderCtx, prefix: string, current: string | null): string
 </nav></aside>`
 }
 
-function shell(o: { ctx: ReaderCtx; prefix: string; title: string; description?: string; canonical?: string; current: string | null; pane: string }): string {
-  const { ctx, prefix } = o
-  const hasFeed = !!ctx.site.site_url
+const THEME_BOOT = `<script>try{var t=localStorage.getItem('sj-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;if(localStorage.getItem('sj-side')==='0')document.documentElement.dataset.side='closed'}catch(e){}</script>`
+
+function head(o: { title: string; assets: string; description?: string; canonical?: string; feed?: string; extra?: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(o.title)}</title>
-${o.description ? `<meta name="description" content="${esc(o.description)}">\n` : ''}${o.canonical ? `<link rel="canonical" href="${esc(o.canonical)}">\n` : ''}${hasFeed ? `<link rel="alternate" type="application/rss+xml" title="${esc(siteName(ctx.site))}" href="${prefix}feed.xml">\n` : ''}<script>try{var t=localStorage.getItem('sj-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;if(localStorage.getItem('sj-side')==='0')document.documentElement.dataset.side='closed'}catch(e){}</script>
-<link rel="stylesheet" href="${prefix}style.css">
-<script defer src="${prefix}script.js"></script>
-</head>
-<body data-root="${prefix}">
+${o.description ? `<meta name="description" content="${esc(o.description)}">\n` : ''}${o.canonical ? `<link rel="canonical" href="${esc(o.canonical)}">\n` : ''}${o.feed ? `<link rel="alternate" type="application/rss+xml" href="${o.feed}">\n` : ''}${o.extra ?? ''}${THEME_BOOT}
+<link rel="stylesheet" href="${o.assets}style.css">
+<script defer src="${o.assets}script.js"></script>
+</head>`
+}
+
+function shell(o: { ctx: ReaderCtx; base: string; assets: string; title: string; description?: string; canonical?: string; current: string | null; pane: string }): string {
+  const { ctx, base } = o
+  const feed = ctx.vaultUrl ? `${base}feed.xml` : ''
+  return `${head({ title: o.title, assets: o.assets, description: o.description, canonical: o.canonical, feed })}
+<body data-base="${base || './'}" data-build="${ctx.build}">
 <div class="shell">
 <header class="top">
   <div class="top-left">
     <button class="icon-btn" data-action="sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">${icon('panelLeft')}</button>
-    <a class="brand" href="${prefix}">${esc(siteName(ctx.site))}</a>
+    <a class="brand" href="${base || './'}">${esc(siteName(ctx.site))}</a>
   </div>
   <div class="top-actions">
-    ${hasFeed ? `<a class="icon-btn" href="${prefix}feed.xml" title="RSS feed" aria-label="RSS feed">${icon('rss')}</a>` : ''}
+    ${feed ? `<a class="icon-btn" href="${feed}" title="RSS feed" aria-label="RSS feed">${icon('rss')}</a>` : ''}
     <button class="icon-btn" data-action="theme" title="Switch theme" aria-label="Switch theme">${icon('moon')}</button>
   </div>
 </header>
 <div class="work">
-${sidebar(ctx, prefix, o.current)}
+${sidebar(ctx, base, o.current)}
 <div class="scrim" data-action="sidebar"></div>
 <main class="pane">
 ${o.pane}
@@ -77,41 +92,41 @@ ${o.pane}
 }
 
 export function readerNotePage(s: SitePage, bodyHtml: string, ctx: ReaderCtx): string {
-  const prefix = '../../'
+  const base = '../'
   const text = ctx.text.get(s.page.id) ?? ''
   const n = words(text)
 
-  let head: string
+  let title: string
   if (s.daily) {
     // ‹ older entry · › newer entry, among published journal entries
     const days = ctx.plan.included.filter(x => x.daily)
     const i = days.findIndex(x => x.page.id === s.page.id)
     const older = days[i + 1], newer = days[i - 1]
     const nav = (t: SitePage | undefined, name: 'left' | 'right', aria: string) => t
-      ? `<a class="icon-btn" href="${prefix}${t.path}/" title="${esc(aria)}: ${esc(label(t))}" aria-label="${esc(aria)}">${icon(name)}</a>`
+      ? `<a class="icon-btn" href="${base}${t.path}/" title="${esc(aria)}: ${esc(label(t))}" aria-label="${esc(aria)}">${icon(name)}</a>`
       : `<span class="icon-btn disabled" aria-hidden="true">${icon(name)}</span>`
-    head = `<div class="daily-nav"><h1>${esc(label(s, true))}</h1>${nav(older, 'left', 'Older entry')}${nav(newer, 'right', 'Newer entry')}</div>`
+    title = `<div class="daily-nav"><h1>${esc(label(s, true))}</h1>${nav(older, 'left', 'Older entry')}${nav(newer, 'right', 'Newer entry')}</div>`
   } else {
-    head = `<h1>${esc(s.page.title)}</h1>`
+    title = `<h1>${esc(s.page.title)}</h1>`
   }
 
   const back = ctx.backlinks.get(s.page.id) ?? []
   const backlinks = back.length ? `
 <nav class="backlinks" aria-label="Linked from">
   <h3>Linked from</h3>
-  <ul>${back.map(b => `<li><a href="${prefix}${b.path}/"><span class="bl-title">${esc(label(b))}</span><span class="bl-snippet">${esc(excerpt(ctx.text.get(b.page.id) ?? '', 120))}</span></a></li>`).join('')}</ul>
+  <ul>${back.map(b => `<li><a href="${base}${b.path}/"><span class="bl-title">${esc(label(b))}</span><span class="bl-snippet">${esc(excerpt(ctx.text.get(b.page.id) ?? '', 120))}</span></a></li>`).join('')}</ul>
 </nav>` : ''
 
-  const pane = `<div class="pane-head">${head}<span class="wc">${n} ${n === 1 ? 'word' : 'words'}</span></div>
+  const pane = `<div class="pane-head">${title}<span class="wc">${n} ${n === 1 ? 'word' : 'words'}</span></div>
 <article class="note">
 ${bodyHtml}
 </article>${backlinks}`
 
   return shell({
-    ctx, prefix, current: s.page.id, pane,
+    ctx, base, assets: '../../', current: s.page.id, pane,
     title: `${label(s, true)} — ${siteName(ctx.site)}`,
     description: excerpt(text, 160),
-    canonical: ctx.site.site_url ? `${ctx.site.site_url.replace(/\/$/, '')}/${s.path}/` : undefined,
+    canonical: ctx.vaultUrl ? `${ctx.vaultUrl}${s.path}/` : undefined,
   })
 }
 
@@ -126,11 +141,38 @@ ${days.length ? `<h2>Journal</h2><ul>${days.slice(0, 30).map(link).join('')}</ul
 ${notes.length ? `<h2>Notes</h2><ul>${notes.map(link).join('')}</ul>` : ''}
 </article>`
   return shell({
-    ctx, prefix: '', current: null, pane,
+    ctx, base: '', assets: '../', current: null, pane,
     title: siteName(ctx.site),
     description: ctx.site.site_description ?? undefined,
-    canonical: ctx.site.site_url || undefined,
+    canonical: ctx.vaultUrl || undefined,
   })
+}
+
+/** Site root: straight to the vault when there is one, a short list when there are several. */
+export function readerLanding(vaults: LandingVault[]): string {
+  if (vaults.length === 1) {
+    const v = vaults[0]
+    return `${head({ title: v.title, assets: '', description: v.description || undefined, extra: `<meta http-equiv="refresh" content="0; url=${esc(v.slug)}/">\n` })}
+<body><div class="shell"><main class="pane"><article class="note"><p><a href="${esc(v.slug)}/">${esc(v.title)}</a></p></article></main></div></body>
+</html>
+`
+  }
+  const items = vaults.map(v => `<li><a class="wikilink" href="${esc(v.slug)}/">${esc(v.title)}</a>${v.description ? `<br><span class="muted">${esc(v.description)}</span>` : ''}</li>`).join('')
+  return `${head({ title: 'Notes', assets: '' })}
+<body>
+<div class="shell">
+<header class="top">
+  <div class="top-left"><span class="brand">Notes</span></div>
+  <div class="top-actions"><button class="icon-btn" data-action="theme" title="Switch theme" aria-label="Switch theme">${icon('moon')}</button></div>
+</header>
+<div class="work"><main class="pane">
+<div class="pane-head"><h1>Notes</h1></div>
+<article class="note"><ul class="vault-list">${items}</ul></article>
+</main></div>
+</div>
+</body>
+</html>
+`
 }
 
 /** Lets the sidebar search note bodies, not just titles. */
@@ -247,33 +289,46 @@ input[type=search]::-webkit-search-cancel-button { display: none; }
   .work.side-open .side-col { transform: none; box-shadow: 8px 0 24px rgba(0,0,0,0.2); }
   .work.side-open .scrim { display: block; position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,0.25); }
 }
+.muted { color: var(--muted); }
+.vault-list li { margin-bottom: 0.6em; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 `
 
 export const READER_JS = `(function () {
   var root = document.documentElement, body = document.body
-  var work = document.querySelector('.work'), side = document.querySelector('.side')
-  var list = document.querySelector('.side-list'), input = document.querySelector('.side-search')
-  var empty = list.querySelector('.empty')
-  var rows = [].slice.call(list.querySelectorAll('li[data-path]'))
-  var narrow = window.matchMedia('(max-width: 800px)')
   var SUN = ${JSON.stringify(icon('sun'))}, MOON = ${JSON.stringify(icon('moon'))}
   var set = function (k, v) { try { localStorage.setItem(k, v) } catch (e) {} }
 
   // theme: follows the system until the reader picks one
   var isDark = function () { var t = root.dataset.theme; return t ? t === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches }
   var themeBtn = document.querySelector('[data-action=theme]')
-  var paint = function () { themeBtn.innerHTML = isDark() ? SUN : MOON; themeBtn.title = isDark() ? 'Light theme' : 'Dark theme' }
+  var paint = function () { if (!themeBtn) return; themeBtn.innerHTML = isDark() ? SUN : MOON; themeBtn.title = isDark() ? 'Light theme' : 'Dark theme' }
   paint()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint)
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('[data-action=theme]')) { var next = isDark() ? 'light' : 'dark'; root.dataset.theme = next; set('sj-theme', next); paint() }
+  })
 
-  // sidebar search (titles, then note text once the index has loaded)
+  var side = document.querySelector('.side')
+  if (!side) return   // landing page: theme only
+
+  var work = document.querySelector('.work'), pane = document.querySelector('.pane')
+  var list = side.querySelector('.side-list'), input = side.querySelector('.side-search')
+  var empty = list.querySelector('.empty')
+  var rows = [].slice.call(list.querySelectorAll('li[data-path]'))
+  var narrow = window.matchMedia('(max-width: 800px)')
+  var baseUrl = new URL(body.dataset.base || './', location.href).href
+
+  // links in the chrome become absolute, so they stay right when the address changes without a reload
+  document.querySelectorAll('.side a[href], .top a[href]').forEach(function (a) { a.setAttribute('href', a.href) })
+
+  // ---- search: titles at once, note text once the index has loaded ----
   var q = '', index = null
   var loadIndex = function () {
     if (index) return
     index = {}
-    fetch(body.dataset.root + 'search.json').then(function (r) { return r.json() }).then(function (a) {
-      a.forEach(function (e) { index[e.p] = e.x }); apply()
+    fetch(baseUrl + 'search.json').then(function (r) { return r.json() }).then(function (a) {
+      a.forEach(function (e) { index[baseUrl + e.p + '/'] = e.x }); apply()
     }).catch(function () {})
   }
   var apply = function () {
@@ -281,7 +336,7 @@ export const READER_JS = `(function () {
     rows.forEach(function (li) {
       var ok = true
       if (q) {
-        var t = li.textContent.toLowerCase(), x = index && index[li.dataset.path]
+        var t = li.textContent.toLowerCase(), x = index && index[li.querySelector('a').href]
         ok = t.indexOf(q) >= 0 || (!!x && x.indexOf(q) >= 0)
       }
       li.hidden = !ok; if (ok) shown++
@@ -297,15 +352,91 @@ export const READER_JS = `(function () {
   input.addEventListener('input', function () { q = input.value.trim().toLowerCase(); apply() })
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') openSearch(false)
-    if (e.key === 'Enter') { var first = rows.filter(function (li) { return !li.hidden })[0]; if (first) location.href = first.querySelector('a').href }
+    if (e.key === 'Enter') { var first = rows.filter(function (li) { return !li.hidden })[0]; if (first) go(first.querySelector('a').href, true) }
   })
-  apply()
   var on = list.querySelector('li.on'); if (on) on.scrollIntoView({ block: 'nearest' })
 
+  // ---- pages are kept for the whole visit: switching back to a note is instant, with no refetch ----
+  var PREFIX = 'sj-page:'
+  var key = function (u) { var x = new URL(u, location.href); x.hash = ''; x.search = ''; return x.href }
+  var cache = new Map(), inflight = {}, scrolls = {}
+  try {   // pages cached by an older publish are dropped
+    if (sessionStorage.getItem('sj-build') !== body.dataset.build) {
+      for (var i = sessionStorage.length - 1; i >= 0; i--) { var k = sessionStorage.key(i); if (k && k.indexOf(PREFIX) === 0) sessionStorage.removeItem(k) }
+      sessionStorage.setItem('sj-build', body.dataset.build)
+    }
+  } catch (e) {}
+  var remember = function (u, entry) { cache.set(u, entry); try { sessionStorage.setItem(PREFIX + u, JSON.stringify(entry)) } catch (e) {} }
+  var recall = function (u) {
+    if (cache.has(u)) return cache.get(u)
+    try { var s = sessionStorage.getItem(PREFIX + u); if (s) { var e = JSON.parse(s); cache.set(u, e); return e } } catch (e) {}
+    return null
+  }
+  var absolutise = function (el, from) { el.querySelectorAll('a[href]').forEach(function (a) { a.setAttribute('href', new URL(a.getAttribute('href'), from).href) }) }
+  var current = key(location.href)
+  absolutise(pane, location.href)
+  remember(current, { title: document.title, html: pane.innerHTML })
+
+  var load = function (u) {
+    var hit = recall(u)
+    if (hit) return Promise.resolve(hit)
+    if (!inflight[u]) {
+      inflight[u] = fetch(u).then(function (r) { if (!r.ok) throw new Error(r.status); return r.text() }).then(function (t) {
+        var doc = new DOMParser().parseFromString(t, 'text/html'), p = doc.querySelector('main.pane')
+        if (!p) throw new Error('not a note page')
+        absolutise(p, u)
+        var entry = { title: doc.title, html: p.innerHTML }
+        remember(u, entry); return entry
+      })
+      inflight[u].then(function () { delete inflight[u] }, function () { delete inflight[u] })
+    }
+    return inflight[u]
+  }
+  var show = function (u, entry, restore) {
+    pane.innerHTML = entry.html; document.title = entry.title
+    rows.forEach(function (li) { li.classList.toggle('on', li.querySelector('a').href === u) })
+    pane.scrollTop = restore && scrolls[u] ? scrolls[u] : 0
+    current = u
+    if (narrow.matches) work.classList.remove('side-open')
+  }
+  var go = function (href, push) {
+    var u = key(href)
+    scrolls[current] = pane.scrollTop
+    load(u).then(function (entry) { if (push) history.pushState({ sj: 1 }, '', u); show(u, entry, !push) })
+      .catch(function () { location.href = u })
+  }
+  var inVault = function (u) { return u.indexOf(baseUrl) === 0 && /\\/$/.test(u) }
+  history.replaceState({ sj: 1 }, '')
+  window.addEventListener('popstate', function () {
+    var u = key(location.href)
+    if (!inVault(u)) { location.reload(); return }
+    scrolls[current] = pane.scrollTop
+    load(u).then(function (entry) { show(u, entry, true) }).catch(function () { location.reload() })
+  })
+
+  // warm the cache just before a click
+  var hoverTimer = null
+  var prefetch = function (a) { var u = key(a.href); if (inVault(u) && !recall(u)) load(u).catch(function () {}) }
+  document.addEventListener('mouseover', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]'); if (!a) return
+    clearTimeout(hoverTimer); hoverTimer = setTimeout(function () { prefetch(a) }, 70)
+  })
+  document.addEventListener('touchstart', function (e) { var a = e.target.closest && e.target.closest('a[href]'); if (a) prefetch(a) }, { passive: true })
+
   document.addEventListener('click', function (e) {
-    var a = e.target.closest('[data-action]'); if (!a) return
-    var act = a.dataset.action
-    if (act === 'theme') { var next = isDark() ? 'light' : 'dark'; root.dataset.theme = next; set('sj-theme', next); paint() }
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    var a = e.target.closest('a[href]')
+    if (a && !a.target && !a.hasAttribute('download')) {
+      var u = key(a.href)
+      if (inVault(u)) {
+        if (a.hash && u === current) return   // in-page anchor
+        e.preventDefault()
+        if (u === current) { if (narrow.matches) work.classList.remove('side-open'); return }
+        go(a.href, true); return
+      }
+    }
+    var btn = e.target.closest('[data-action]'); if (!btn) return
+    var act = btn.dataset.action
     if (act === 'search') openSearch(input.hidden)
     if (act === 'sidebar') {
       if (narrow.matches) work.classList.toggle('side-open')

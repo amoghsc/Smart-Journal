@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Globe, LayoutGrid, PanelLeft, Settings } from 'lucide-react'
 import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
@@ -30,7 +30,7 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, vault, getPage, createLocal, discardLocal } = useStore()
+  const { pages, vault, setVault, getPage, createLocal, discardLocal } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
   const [panes, setPanes] = useState<string[]>(() => [todayTitle()])
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 800px)').matches)
@@ -104,6 +104,23 @@ function Workspace({ email }: { email: string }) {
     setTimeout(() => { setPanes(ps => ps.filter(p => p !== title)); setClosing(c => c.filter(t => t !== title)) }, anim ? PANE_OUT_MS : 0)
   }, [anim])
 
+  // switching vault: open panes belonged to the old vault, so start fresh (on a given note, or today)
+  const prevVault = useRef<string | null>(null)
+  const openAfterSwitch = useRef<string | null>(null)
+  useEffect(() => {
+    if (!vault) return
+    if (prevVault.current && prevVault.current !== vault.id) {
+      setPanes([openAfterSwitch.current ?? todayTitle()])
+      setFocusLast(false)
+    }
+    openAfterSwitch.current = null
+    prevVault.current = vault.id
+  }, [vault])
+  const openInVault = useCallback((vaultId: string, title: string) => {
+    openAfterSwitch.current = title
+    setVault(vaultId)
+  }, [setVault])
+
   // a "+" note that was never edited disappears once it is no longer open
   useEffect(() => {
     for (const p of pages) if (p.local && !panes.includes(p.title)) discardLocal(p.id)
@@ -170,6 +187,7 @@ function Workspace({ email }: { email: string }) {
                     onNewBeside={narrow || canvasOpen ? undefined : () => newNoteBeside(i)}
                     onNavigate={t => setPanes(ps => ps.map((p, j) => j === i ? t : p))}
                     onRenamed={(from, to) => setPanes(ps => ps.map(p => p === from ? to : p))}
+                    onOpenInVault={openInVault}
                     onClose={i > 0 ? () => closePane(title) : undefined}
                   />
                 )

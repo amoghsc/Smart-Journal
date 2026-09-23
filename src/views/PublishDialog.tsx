@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Download, ExternalLink, GitBranch, Globe, ShieldCheck, Upload, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { downloadSite, githubStatus, planSite, publishToGitHub, type GitHubResult, type GitHubStatus } from '../lib/publish'
+import { downloadSite, githubStatus, planSite, publishedOthers, publishToGitHub, vaultSlug, type GitHubResult, type GitHubStatus } from '../lib/publish'
 import { isDailyTitle, prettyDate } from '../lib/links'
 import type { Vault } from '../lib/types'
 
@@ -20,7 +20,7 @@ function ago(iso: string): string {
 
 /** Review exactly what will go public, then publish to GitHub (or export a zip). Nothing leaves without this step. */
 export function PublishDialog({ vault, onClose }: Props) {
-  const { pagesIn, updateVault } = useStore()
+  const { pagesIn, updateVault, vaults } = useStore()
   const [site, setSite] = useState({
     site_title: vault.site_title ?? vault.name,
     site_description: vault.site_description ?? '',
@@ -43,12 +43,13 @@ export function PublishDialog({ vault, onClose }: Props) {
 
   const plan = useMemo(() => planSite(pagesIn(vault.id)), [pagesIn, vault.id])
   const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
+  const slug = vaultSlug(vault)
 
   const toGitHub = async () => {
     setBusy('github'); setErr(null); setResult(null)
     try {
       await updateVault(vault.id, settings())
-      setResult(await publishToGitHub(plan, { ...vault, ...settings() }))
+      setResult(await publishToGitHub(plan, { ...vault, ...settings() }, publishedOthers(vaults, vault.id)))
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
 
@@ -99,7 +100,7 @@ export function PublishDialog({ vault, onClose }: Props) {
             {plan.included.map(s => (
               <li key={s.page.id}>
                 <span className="pub-title">{label(s.page.title)}</span>
-                <span className="pub-path">/{s.path}/</span>
+                <span className="pub-path">/{slug}/{s.path}/</span>
               </li>
             ))}
           </ul>
@@ -129,7 +130,7 @@ export function PublishDialog({ vault, onClose }: Props) {
             {err && <span className="err-text">{err}</span>}
             {!err && result && (result.unchanged
               ? <span className="muted small">Nothing changed since the last publish.</span>
-              : <span className="pub-done">Published · <a href={result.commitUrl} target="_blank" rel="noopener">commit {result.commit.slice(0, 7)}</a> · <a href={result.siteUrl} target="_blank" rel="noopener">view site <ExternalLink size={11} /></a></span>)}
+              : <span className="pub-done">Published · <a href={result.commitUrl} target="_blank" rel="noopener">commit {result.commit.slice(0, 7)}</a> · <a href={result.vaultUrl} target="_blank" rel="noopener">view site <ExternalLink size={11} /></a></span>)}
             {!err && !result && zipped !== null && <span className="pub-done">Downloaded {zipped} files.</span>}
           </div>
           <div className="pub-actions">

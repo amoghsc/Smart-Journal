@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, Globe, MessageSquare, 
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
-import { MoveToVault } from '../components/MoveToVault'
+import { CopyToVault } from '../components/CopyToVault'
 import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../lib/links'
 import { plainText } from '../lib/html'
 
@@ -15,6 +15,8 @@ interface Props {
   /** Replace this pane's page (day arrows, backlinks). */
   onNavigate: (title: string) => void
   onRenamed: (from: string, to: string) => void
+  /** Switch to another vault and show a note there (after copying). */
+  onOpenInVault: (vaultId: string, title: string) => void
   onNewBeside?: () => void
   onClose?: () => void
   /** Play the exit animation (the parent removes the pane afterwards). */
@@ -31,7 +33,7 @@ function rectAnchor(el: Element | null) {
 }
 
 /** One page: title, the editor, margin comments, backlinks. */
-export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
+export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
   const { getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
@@ -148,7 +150,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onNewBeside
               {page.draft ? <EyeOff size={16} /> : <Globe size={16} />}
             </button>
           )}
-          {page && !page.local && vaults.length > 1 && <MoveToVault page={page} linkedFrom={linkedFrom.length} onMoved={() => onNavigate(todayTitle())} />}
+          {page && !page.local && vaults.length > 1 && <CopyToVault page={page} onOpenCopy={onOpenInVault} />}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}

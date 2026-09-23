@@ -34,7 +34,7 @@ interface Store {
   renamePage: (id: string, title: string) => Promise<void>
   deletePage: (id: string) => Promise<void>
   setDraft: (id: string, draft: boolean) => Promise<void>
-  movePage: (id: string, vaultId: string) => Promise<void>
+  copyPages: (ids: string[], vaultId: string) => Promise<number>
   createVault: (name: string, kind: VaultKind) => Promise<Vault>
   updateVault: (id: string, patch: Partial<Vault>) => Promise<void>
   deleteVault: (id: string) => Promise<void>
@@ -264,20 +264,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }, [byId])
 
-  const movePage = useCallback(async (id: string, target: string) => {
-    const p = latest.current.get(id) ?? byId.get(id)
-    if (!p || p.vault_id === target) return
-    const clash = allPages.find(x => x.vault_id === target && normTitle(x.title) === normTitle(p.title))
-    if (clash) throw new Error(`That vault already has a note called “${clash.title}”`)
-    upsertLocal({ ...p, vault_id: target })
-    const { error } = await supabase.from('nt_pages').update({ vault_id: target }).eq('id', id)
-    if (error) throw error
-    // links from the vault it left can no longer resolve, so they become plain text
-    for (const lid of backlinks.get(normTitle(p.title)) ?? []) {
-      const l = latest.current.get(lid) ?? byId.get(lid)
-      if (l && l.id !== id) setBody(l.title, unlinkTitle(l.body, p.title))
+  /**
+   * Copy notes into another vault. The originals stay where they are. A note whose title already exists
+   * in the target vault replaces that copy's text (so copying again brings a published copy up to date).
+   */
+  const copyPages = useCallback(async (ids: string[], target: string) => {
+    const now = new Date().toISOString()
+    const inTarget = (title: string) => [...latest.current.values()].find(x => x.vault_id === target && !x.local && normTitle(x.title) === normTitle(title))
+    const out: Page[] = []
+    for (const id of ids) {
+      const src = latest.current.get(id) ?? byId.get(id)
+      if (!src || src.vault_id === target) continue
+      const existing = inTarget(src.title)
+      out.push(existing
+        ? { ...existing, body: src.body, kind: src.kind, updated_at: now }
+        : { id: crypto.randomUUID(), vault_id: target, title: src.title, kind: src.kind, body: src.body, created_at: now, updated_at: now, draft: false })
     }
-  }, [byId, allPages, backlinks, setBody])
+    if (!out.length) return 0
+    const { error } = await supabase.from('nt_pages').upsert(out.map(row))
+    if (error) throw error
+    for (const p of out) upsertLocal(p)
+    for (const p of out) {
+      const links = extractLinks(p.body)
+      await supabase.from('nt_links').delete().eq('from_page', p.id)
+      if (links.length) await supabase.from('nt_links').insert(links.map(t => ({ from_page: p.id, to_title: t })))
+    }
+    return out.length
+  }, [byId])
 
   // ---- vaults ----
   const createVault = useCallback(async (name: string, kind: VaultKind) => {
@@ -342,7 +355,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: Store = {
     session, ready, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
-    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, movePage,
+    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages,
     createVault, updateVault, deleteVault, reload, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

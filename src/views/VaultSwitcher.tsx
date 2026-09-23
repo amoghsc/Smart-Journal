@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Globe, Lock, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Globe, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { RenameVaultDialog } from './RenameVaultDialog'
 import { useStore } from '../lib/store'
-import type { VaultKind } from '../lib/types'
+import type { Vault, VaultKind } from '../lib/types'
 
 /** Vault picker at the top of the sidebar; public vaults carry a globe. */
 export function VaultSwitcher() {
@@ -11,10 +12,23 @@ export function VaultSwitcher() {
   const [name, setName] = useState('')
   const [kind, setKind] = useState<VaultKind>('private')
   const box = useRef<HTMLDivElement>(null)
+  // inline rename: which vault is being edited, and the confirmed request
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
+  const [renaming, setRenaming] = useState<{ vault: Vault; name: string } | null>(null)
+
+  const startRename = (v: Vault) => { setEditing(v.id); setDraftName(v.name) }
+  const submitRename = (v: Vault) => {
+    const next = draftName.replace(/\s+/g, ' ').trim()
+    setEditing(null)
+    if (!next || next === v.name) return
+    setOpen(false)
+    setRenaming({ vault: v, name: next })
+  }
 
   useEffect(() => {
     if (!open) return
-    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) { setOpen(false); setAdding(false) } }
+    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) { setOpen(false); setAdding(false); setEditing(null) } }
     document.addEventListener('mousedown', away)
     return () => document.removeEventListener('mousedown', away)
   }, [open])
@@ -44,7 +58,14 @@ export function VaultSwitcher() {
 
       {open && (
         <div className="vault-menu">
-          {vaults.map(v => (
+          {vaults.map(v => editing === v.id ? (
+            <div key={v.id} className="vault-row editing">
+              {v.kind === 'public' ? <Globe size={13} /> : <Lock size={13} />}
+              <input autoFocus value={draftName} aria-label="Vault name" onChange={e => setDraftName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submitRename(v); if (e.key === 'Escape') { e.stopPropagation(); setEditing(null) } }}
+                onBlur={() => submitRename(v)} />
+            </div>
+          ) : (
             <div key={v.id} className={'vault-row' + (v.id === vault.id ? ' on' : '')}>
               <button className="vault-pick" onClick={() => { setVault(v.id); setOpen(false) }}>
                 {v.kind === 'public' ? <Globe size={13} /> : <Lock size={13} />}
@@ -52,7 +73,8 @@ export function VaultSwitcher() {
                 <span className="vault-count">{pagesIn(v.id).length}</span>
                 {v.id === vault.id && <Check size={13} />}
               </button>
-              {vaults.length > 1 && <button className="vault-del" title="Delete vault" onClick={() => remove(v.id, v.name)}><Trash2 size={13} /></button>}
+              <button className="vault-del" title="Rename vault" onClick={() => startRename(v)}><Pencil size={13} /></button>
+              {vaults.length > 1 && <button className="vault-del danger" title="Delete vault" onClick={() => remove(v.id, v.name)}><Trash2 size={13} /></button>}
             </div>
           ))}
 
@@ -74,6 +96,7 @@ export function VaultSwitcher() {
           )}
         </div>
       )}
+      {renaming && <RenameVaultDialog vault={renaming.vault} name={renaming.name} onClose={() => setRenaming(null)} />}
     </div>
   )
 }

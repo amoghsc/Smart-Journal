@@ -5,19 +5,32 @@
 //  - The target repo is fixed by a secret too, so a caller cannot redirect a publish elsewhere.
 //  - The caller must be a signed-in Smart Journal member (checked through RLS with their own JWT),
 //    and the vault must be `public` in the database — a private vault is refused here, not just hidden in the UI.
-//  - File paths are checked against a strict allowlist, so nothing but the site's own files can be written.
-//  - Each publish commits the whole tree: the repo mirrors the export exactly, so any change made on
-//    GitHub by anyone is replaced on the next publish, and every publish is an auditable commit.
+//  - The vault's folder is derived here from its name in the database; the caller can only write the
+//    shared root files and files inside that one folder (strict path allowlist).
+//  - The new tree = the uploaded files + the folders of the other published vaults, kept as they are.
+//    Anything else (this vault's stale notes, a folder left by a rename or a deleted vault) is dropped,
+//    so the repo always mirrors what is published. Every publish is one auditable commit.
 //
 // Secrets: GITHUB_TOKEN (fine-grained PAT: one repo, Contents read/write), GITHUB_REPO ("owner/name"),
 // optional GITHUB_BRANCH (default "main").
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const ALLOWED_ORIGINS = ['https://amoghsc.github.io', 'http://localhost:5183']
-const PATH_RE = /^(index\.html|style\.css|script\.js|search\.json|feed\.xml|README\.md|\.nojekyll|(notes\/[\p{L}\p{M}\p{N}-]{1,160}|journal\/\d{4}-\d{2}-\d{2})\/index\.html)$/u
+const ROOT_FILE_RE = /^(index\.html|style\.css|script\.js|README\.md|\.nojekyll)$/
+const VAULT_FILE_RE = /^(index\.html|search\.json|feed\.xml|[\p{L}\p{M}\p{N}-]{1,160}\/index\.html)$/u
 const MAX_FILES = 5000
 const MAX_BYTES = 25 * 1024 * 1024
 const GH = 'https://api.github.com'
+
+/** Identical to slugFor in src/lib/publish.ts — keep them in step. */
+function slugFor(title: string): string {
+  const s = title.toLowerCase().normalize('NFKD')
+    .replace(/([a-z])\p{M}+/gu, '$1')
+    .normalize('NFC')
+    .replace(/[^\p{L}\p{M}\p{N}\s-]/gu, '')
+    .trim().replace(/\s+/g, '-').replace(/-+/g, '-').slice(0, 120).replace(/-$/, '')
+  return s || 'note'
+}
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''
@@ -62,8 +75,10 @@ async function headSha(token: string, repo: string, branch: string): Promise<str
   throw new HttpError(502, `GitHub: could not read branch (${r.status})`)
 }
 
-/** Replace the branch's entire tree with `files` in one commit. */
-async function publish(token: string, repo: string, branch: string, files: Record<string, string>, message: string) {
+interface TreeEntry { path: string; mode: string; type: 'blob'; content?: string; sha?: string }
+
+/** Commit a new tree: `files` as uploaded, plus every existing file inside one of the `keep` folders. */
+async function publish(token: string, repo: string, branch: string, files: Record<string, string>, keep: Set<string>, message: string) {
   let parent = await headSha(token, repo, branch)
   if (!parent) {
     // the Git Data API cannot write to an empty repo, so seed it through the Contents API first
@@ -78,10 +93,19 @@ async function publish(token: string, repo: string, branch: string, files: Recor
   const current = await gh(token, 'GET', `/repos/${repo}/git/commits/${parent}`)
   if (current.status !== 200) throw new HttpError(502, `GitHub: could not read the latest commit (${current.status})`)
 
-  // no base_tree: the new tree contains exactly these files and nothing else
-  const tree = await gh(token, 'POST', `/repos/${repo}/git/trees`, {
-    tree: Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content })),
-  })
+  const entries: TreeEntry[] = Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content }))
+  if (keep.size) {
+    const old = await gh(token, 'GET', `/repos/${repo}/git/trees/${current.data.tree.sha}?recursive=1`)
+    if (old.status !== 200) throw new HttpError(502, `GitHub: could not list the current files (${old.status})`)
+    if (old.data.truncated) throw new HttpError(502, 'The site has too many files to update safely in one go')
+    for (const e of old.data.tree as { path: string; mode: string; type: string; sha: string }[]) {
+      if (e.type !== 'blob' || e.path in files) continue
+      if (keep.has(e.path.split('/')[0])) entries.push({ path: e.path, mode: e.mode, type: 'blob', sha: e.sha })
+    }
+  }
+
+  // no base_tree: the new tree is exactly `entries`
+  const tree = await gh(token, 'POST', `/repos/${repo}/git/trees`, { tree: entries })
   if (tree.status !== 201) throw new HttpError(502, `GitHub: could not build the file tree (${tree.status})`)
 
   if (tree.data.sha === current.data.tree.sha) return { commit: parent, unchanged: true }
@@ -94,18 +118,20 @@ async function publish(token: string, repo: string, branch: string, files: Recor
   return { commit: commit.data.sha as string, unchanged: false }
 }
 
-function validate(files: unknown): Record<string, string> {
+function validate(files: unknown, slug: string): Record<string, string> {
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new HttpError(400, 'files must be an object of path → text')
   const entries = Object.entries(files as Record<string, unknown>)
   if (!entries.length) throw new HttpError(400, 'Nothing to publish')
   if (entries.length > MAX_FILES) throw new HttpError(413, `Too many files (max ${MAX_FILES})`)
+  const prefix = `${slug}/`
   let bytes = 0
   for (const [path, content] of entries) {
-    if (!PATH_RE.test(path)) throw new HttpError(400, `Refusing unexpected path: ${path}`)
+    const ok = ROOT_FILE_RE.test(path) || (path.startsWith(prefix) && VAULT_FILE_RE.test(path.slice(prefix.length)))
+    if (!ok) throw new HttpError(400, `Refusing unexpected path: ${path}`)
     if (typeof content !== 'string') throw new HttpError(400, `File ${path} must be text`)
     bytes += content.length
   }
-  if (!('index.html' in (files as object))) throw new HttpError(400, 'The site has no index.html')
+  if (!(`${prefix}index.html` in (files as object))) throw new HttpError(400, 'The vault has no home page')
   if (bytes > MAX_BYTES) throw new HttpError(413, 'Site is too large to publish in one go')
   return files as Record<string, string>
 }
@@ -144,20 +170,28 @@ Deno.serve(async (req: Request) => {
     if (!token || !repo) throw new HttpError(412, 'GitHub publishing is not set up yet')
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new HttpError(500, 'GITHUB_REPO must look like owner/name')
 
-    const { data: vault, error: vaultErr } = await sb.from('nt_vaults').select('id,name,kind').eq('id', body.vault_id).maybeSingle()
-    if (vaultErr) throw new HttpError(500, vaultErr.message)
+    const { data: vaults, error: vaultsErr } = await sb.from('nt_vaults').select('id,name,kind,published_slug')
+    if (vaultsErr) throw new HttpError(500, vaultsErr.message)
+    const vault = vaults?.find(v => v.id === body.vault_id)
     if (!vault) throw new HttpError(404, 'Vault not found')
     if (vault.kind !== 'public') throw new HttpError(403, 'Only a public vault can be published')
 
-    const files = validate(body.files)
-    const notes = Object.keys(files).filter(p => p.endsWith('/index.html')).length
-    const message = `Publish ${vault.name}: ${notes} ${notes === 1 ? 'page' : 'pages'}`
-    const result = await publish(token, repo, branch, files, message)
+    const slug = slugFor(vault.name)
+    const others = (vaults ?? []).filter(v => v.id !== vault.id && v.kind === 'public' && v.published_slug)
+    const clash = others.find(v => v.published_slug === slug)
+    if (clash) throw new HttpError(409, `“${clash.name}” is already published at /${slug}/ — rename one of the two vaults`)
+    const keep = new Set(others.map(v => v.published_slug as string))
 
-    if (!result.unchanged) {
-      await sb.from('nt_vaults').update({ published_at: new Date().toISOString(), published_commit: result.commit }).eq('id', vault.id)
+    const files = validate(body.files, slug)
+    const notes = Object.keys(files).filter(p => p.startsWith(`${slug}/`) && p.split('/').length === 3).length
+    const message = `Publish ${vault.name}: ${notes} ${notes === 1 ? 'page' : 'pages'}`
+    const result = await publish(token, repo, branch, files, keep, message)
+
+    if (!result.unchanged || vault.published_slug !== slug) {
+      await sb.from('nt_vaults').update({ published_at: new Date().toISOString(), published_commit: result.commit, published_slug: slug }).eq('id', vault.id)
     }
-    return json(200, { ...result, repo, siteUrl: pagesUrl(repo), commitUrl: `https://github.com/${repo}/commit/${result.commit}` })
+    const site = pagesUrl(repo)
+    return json(200, { ...result, repo, slug, siteUrl: site, vaultUrl: `${site}${slug}/`, commitUrl: `https://github.com/${repo}/commit/${result.commit}` })
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500
     console.error('nt-publish', status, (e as Error).message)

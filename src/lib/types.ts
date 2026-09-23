@@ -12,6 +12,8 @@ export interface Vault {
   site_url: string | null
   published_at?: string | null
   published_commit?: string | null
+  /** Folder this vault is published under on the site (set by the publisher). */
+  published_slug?: string | null
   sort_order: number
   created_at: string
 }

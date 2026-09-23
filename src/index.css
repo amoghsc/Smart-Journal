@@ -311,3 +311,6 @@ p.small { margin: 0; line-height: 1.45; }
 .pub-status { flex: 1; min-width: 0; font-size: 13px; }
 .pub-status a { color: inherit; }
 .pub-actions { display: flex; gap: 8px; flex: none; }
+
+/* new-version prompt */
+.update-bar { position: fixed; left: 50%; bottom: calc(16px + var(--sab)); transform: translateX(-50%); z-index: 200; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); font-size: 13.5px; white-space: nowrap; animation: fade-in .2s ease; }

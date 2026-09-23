@@ -3,6 +3,7 @@ import type { Page, Vault } from './types'
 import { supabase } from './supabase'
 import { isDailyTitle, normTitle, prettyDate } from './links'
 import { plainText } from './html'
+import { READER_CSS, READER_JS, readerHomePage, readerNotePage, readerSearchIndex, type ReaderCtx } from './reader'
 
 /**
  * Turns a vault into a static site: plain HTML, no JavaScript, relative links
@@ -106,64 +107,6 @@ function renderBody(html: string, byTitle: Map<string, SitePage>, prefix: string
   return body.innerHTML
 }
 
-function layout(o: { title: string; site: string; body: string; prefix: string; description?: string; canonical?: string }): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(o.title)}</title>
-${o.description ? `<meta name="description" content="${esc(o.description)}">\n` : ''}${o.canonical ? `<link rel="canonical" href="${esc(o.canonical)}">\n` : ''}<link rel="alternate" type="application/rss+xml" href="${o.prefix}feed.xml">
-<link rel="stylesheet" href="${o.prefix}style.css">
-</head>
-<body>
-<header class="site-head"><a class="site-name" href="${o.prefix}">${esc(o.site)}</a></header>
-<main>
-${o.body}
-</main>
-<footer class="site-foot"><a href="${o.prefix}">${esc(o.site)}</a></footer>
-</body>
-</html>
-`
-}
-
-function notePage(s: SitePage, byTitle: Map<string, SitePage>, backlinks: SitePage[], site: Vault): string {
-  const prefix = '../../'
-  const heading = s.daily ? prettyDate(s.page.title) : s.page.title
-  const when = new Date(s.page.updated_at).toISOString().slice(0, 10)
-  const body = `<article class="note">
-  <h1>${esc(heading)}</h1>
-  <p class="meta"><time datetime="${when}">${s.daily ? 'Written' : 'Updated'} ${when}</time></p>
-  ${renderBody(s.page.body, byTitle, prefix)}
-</article>` + (backlinks.length ? `
-<nav class="backlinks">
-  <h2>Linked from</h2>
-  <ul>${backlinks.map(b => `<li><a href="${prefix}${b.path}/">${esc(b.daily ? prettyDate(b.page.title) : b.page.title)}</a></li>`).join('')}</ul>
-</nav>` : '')
-
-  return layout({
-    title: `${heading} — ${site.site_title || site.name}`,
-    site: site.site_title || site.name,
-    description: plainText(s.page.body, 160),
-    canonical: site.site_url ? `${site.site_url.replace(/\/$/, '')}/${s.path}/` : undefined,
-    prefix, body,
-  })
-}
-
-function homePage(plan: SitePlan, site: Vault): string {
-  const journal = plan.included.filter(s => s.daily)
-  const notes = plan.included.filter(s => !s.daily)
-  const item = (s: SitePage) => `<li><a href="${s.path}/">${esc(s.daily ? prettyDate(s.page.title) : s.page.title)}</a>${s.daily ? '' : `<span class="excerpt">${esc(plainText(s.page.body, 90))}</span>`}</li>`
-
-  const body = `<div class="home">
-  <h1>${esc(site.site_title || site.name)}</h1>
-  ${site.site_description ? `<p class="lede">${esc(site.site_description)}</p>` : ''}
-  ${journal.length ? `<section><h2>Journal</h2><ul class="list dated">${journal.map(item).join('')}</ul></section>` : ''}
-  ${notes.length ? `<section><h2>Notes</h2><ul class="list">${notes.map(item).join('')}</ul></section>` : ''}
-</div>`
-  return layout({ title: site.site_title || site.name, site: site.site_title || site.name, description: site.site_description ?? undefined, prefix: '', body, canonical: site.site_url || undefined })
-}
-
 function feed(plan: SitePlan, site: Vault, byTitle: Map<string, SitePage>): string {
   const base = (site.site_url || '').replace(/\/$/, '')
   const entries = plan.included.filter(s => s.daily).slice(0, 50)
@@ -183,53 +126,6 @@ ${items}
 </channel></rss>
 `
 }
-
-const STYLE = `:root {
-  --bg: #fffdf9; --fg: #22201d; --muted: #6c6862; --line: #e6e1d8; --accent: #7a5c2e;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #17181a; --fg: #e8e6e2; --muted: #999691; --line: #2d2f33; --accent: #d8b177; }
-}
-* { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.65 var(--font); }
-main, .site-head, .site-foot { max-width: 680px; margin: 0 auto; padding: 0 24px; }
-.site-head { padding-top: 28px; padding-bottom: 28px; }
-.site-name { font-size: 14px; font-weight: 600; letter-spacing: .02em; color: var(--muted); text-decoration: none; text-transform: uppercase; }
-.site-name:hover { color: var(--fg); }
-.site-foot { padding-top: 48px; padding-bottom: 56px; font-size: 13px; color: var(--muted); }
-.site-foot a { color: var(--muted); }
-a { color: var(--accent); }
-a.wikilink { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
-a.wikilink:hover { text-decoration-color: var(--accent); }
-h1 { font-size: 30px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.01em; }
-h2 { font-size: 20px; margin: 32px 0 10px; }
-h3 { font-size: 17px; margin: 24px 0 8px; }
-.meta { margin: 0 0 28px; font-size: 13px; color: var(--muted); }
-.lede { font-size: 19px; color: var(--muted); margin: 0 0 36px; }
-p { margin: 0 0 18px; }
-ul, ol { padding-left: 1.25em; }
-li { margin-bottom: 4px; }
-blockquote { margin: 18px 0; padding: 2px 18px; border-left: 3px solid var(--line); color: var(--muted); }
-pre { background: rgba(127,127,127,.08); padding: 14px 16px; border-radius: 6px; overflow-x: auto; font-size: 14px; }
-code { font-family: ui-monospace, Menlo, monospace; font-size: .92em; }
-pre code { font-size: inherit; }
-img, iframe { max-width: 100%; border-radius: 6px; }
-hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
-.list { list-style: none; padding: 0; }
-.list li { margin-bottom: 12px; display: flex; flex-direction: column; }
-.list a { text-decoration: none; font-weight: 500; }
-.list a:hover { text-decoration: underline; }
-.list .excerpt { font-size: 14px; color: var(--muted); }
-.list.dated a { font-variant-numeric: tabular-nums; }
-.backlinks { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); }
-.backlinks h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-.backlinks ul { list-style: none; padding: 0; margin: 0; }
-.backlinks a { text-decoration: none; }
-.backlinks a:hover { text-decoration: underline; }
-@media (max-width: 600px) { body { font-size: 16px; } h1 { font-size: 26px; } }
-`
 
 const README = (site: string) => `# ${site}
 
@@ -266,13 +162,20 @@ export function buildSite(plan: SitePlan, vault: Vault): Record<string, string> 
     }
   }
 
+  // rendered bodies, and their plain text (from the DOM, so comment bodies held in attributes never leak into excerpts)
+  const bodies = new Map(plan.included.map(s => [s.page.id, renderBody(s.page.body, byTitle, '../../')]))
+  const text = new Map([...bodies].map(([id, html]) => [id, (parse(html).textContent ?? '').replace(/\s+/g, ' ').trim()]))
+  const ctx: ReaderCtx = { site: vault, plan, text, backlinks: back }
+
   const files: Record<string, string> = {
-    'index.html': homePage(plan, vault),
-    'style.css': STYLE,
+    'index.html': readerHomePage(ctx),
+    'style.css': READER_CSS,
+    'script.js': READER_JS,
+    'search.json': readerSearchIndex(ctx),
     '.nojekyll': '',
     'README.md': README(vault.site_title || vault.name),
   }
-  for (const s of plan.included) files[`${s.path}/index.html`] = notePage(s, byTitle, back.get(s.page.id) ?? [], vault)
+  for (const s of plan.included) files[`${s.path}/index.html`] = readerNotePage(s, bodies.get(s.page.id)!, ctx)
   if (vault.site_url) files['feed.xml'] = feed(plan, vault, byTitle)
   return files
 }

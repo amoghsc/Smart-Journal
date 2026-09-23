@@ -14,7 +14,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const ALLOWED_ORIGINS = ['https://amoghsc.github.io', 'http://localhost:5183']
-const PATH_RE = /^(index\.html|style\.css|feed\.xml|README\.md|\.nojekyll|(notes\/[\p{L}\p{M}\p{N}-]{1,160}|journal\/\d{4}-\d{2}-\d{2})\/index\.html)$/u
+const PATH_RE = /^(index\.html|style\.css|script\.js|search\.json|feed\.xml|README\.md|\.nojekyll|(notes\/[\p{L}\p{M}\p{N}-]{1,160}|journal\/\d{4}-\d{2}-\d{2})\/index\.html)$/u
 const MAX_FILES = 5000
 const MAX_BYTES = 25 * 1024 * 1024
 const GH = 'https://api.github.com'

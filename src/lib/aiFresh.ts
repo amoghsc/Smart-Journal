@@ -4,12 +4,13 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Slice } from '@tiptap/pm/model'
 
 /**
- * Text the AI just wrote gets a purple highlight that fades out over a minute. The highlight is a
+ * Text the AI just wrote gets a purple highlight that fades out over 20 seconds. The highlight is a
  * decoration, not part of the note: it is never saved, published or copied. Each highlight remembers
  * the text it replaced, so "Undo" can put exactly that back even after other edits.
  */
 
-export const AI_FRESH_MS = 60_000
+/** How long the highlight takes to fade (keep in step with the .ai-fresh animation in index.css). */
+export const AI_FRESH_MS = 20_000
 
 export interface FreshEntry {
   id: string

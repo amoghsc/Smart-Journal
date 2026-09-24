@@ -7,6 +7,7 @@ import { PluginKey } from '@tiptap/pm/state'
 import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, aiAvailable, parseChoices, runAi, runAiOptions, selectionToText, singleWord, textToContent, wordInContext, type AiTask } from '../lib/ai'
 import { sanitize } from '../lib/html'
+import { aiTwoVersions } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -269,7 +270,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     flags.current.aiBusy = true
     setAiBusy(task)
     try {
-      if (task.mode !== 'choose') {
+      if (task.mode !== 'choose' && aiTwoVersions()) {
         const outs = await runAiOptions(task.id, text)
         flags.current.aiBusy = false
         if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
@@ -471,7 +472,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
             <span>{compare.task.label} — {compare.options.length > 1 ? 'pick the version you prefer' : 'both versions came out the same'}</span>
             <button className="ai-compare-cancel" onMouseDown={e => e.preventDefault()} onClick={cancelCompare} title="Keep my text (Esc)"><X size={13} /> Keep original</button>
           </div>
-          <div className={'ai-compare-options' + (compare.options.length > 1 ? ' two' : '')}>
+          <div className="ai-compare-options">
             {compare.options.map((html, i) => (
               <div key={i} className="ai-option">
                 {compare.options.length > 1 && <div className="ai-option-label">Option {i + 1}</div>}

@@ -41,6 +41,8 @@ interface Store {
   updateVault: (id: string, patch: Partial<Vault>) => Promise<void>
   deleteVault: (id: string) => Promise<void>
   reload: () => Promise<void>
+  /** Write pending edits now and wait for them. */
+  saveNow: () => Promise<void>
   loadItems: (canvasId: string) => Promise<CanvasItem[]>
   addItem: (item: Omit<CanvasItem, 'id'>) => Promise<CanvasItem>
   updateItem: (id: string, patch: Partial<CanvasItem>) => void
@@ -140,9 +142,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     timers.current.delete(key)
     const fn = writers.current.get(key)
     writers.current.delete(key)
-    fn?.().catch(e => console.error('save failed', key, e))
+    return fn?.().catch(e => console.error('save failed', key, e))
   }
   function flushAll() { for (const k of [...timers.current.keys()]) flush(k) }
+  /** Write everything still waiting for its debounce, and wait for it (used before a reload). */
+  const saveNow = useCallback(async () => { await Promise.all([...timers.current.keys()].map(k => flush(k))) }, [])
 
   // the current vault: remembered, else the first private one, else the first
   const vault = useMemo(() => {
@@ -369,7 +373,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value: Store = {
     session, ready, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime,
-    createVault, updateVault, deleteVault, reload, loadItems, addItem, updateItem, deleteItems,
+    createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

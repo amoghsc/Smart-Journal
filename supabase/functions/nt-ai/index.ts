@@ -33,6 +33,19 @@ const TASKS: Record<string, string> = {
   expand:
     'Expand the passage to about twice its length by developing the ideas already in it: explain the reasoning, add texture and connecting sentences. ' +
     'Keep the author\'s voice and first person. Do not invent specific facts about the author\'s life — no new names, events, places or numbers.',
+  formal:
+    'Rewrite the passage in a formal tone: polished, precise and professional — no slang, contractions or casual asides. ' +
+    'Keep the meaning, every point and the author\'s first person.',
+  friendly:
+    'Rewrite the passage in a warm, friendly tone — approachable and kind, as if talking to a friend you respect. ' +
+    'Keep the meaning, every point and the author\'s first person.',
+  casual:
+    'Rewrite the passage in a casual, relaxed tone — everyday phrasing and contractions, like chatting. ' +
+    'Keep the meaning, every point and the author\'s first person.',
+  genz:
+    'Rewrite the passage the way someone from Gen Z would say it — current internet slang and phrasing used naturally, not overdone, ' +
+    'with at most a couple of emojis. In Marathi or Hindi, use the young, everyday register of that language. ' +
+    'Keep the meaning, every point and the author\'s first person.',
   simpler:
     'Rewrite the passage in simpler language: short sentences, everyday words, no jargon, readable by a 12-year-old. ' +
     'Keep the meaning, every point and the author\'s first person.',
@@ -46,6 +59,10 @@ const TASKS: Record<string, string> = {
     'The input gives one word and the sentence it appears in. List up to 8 words or short phrases with a similar meaning that would fit in its place in that sentence, ' +
     'in the same language and script as the word, matching its form (tense, number, gender, case). Most natural first. ' +
     'Output one per line and nothing else — no numbering, bullets, explanations or the original word.',
+  elaborate:
+    'Elaborate on the concept in the passage for a reader meeting it for the first time. Write a few sentences (about 4 to 7) that explain it more fully ' +
+    'and approach it from a couple of different angles: what it means in plain words, why it matters, and a concrete everyday example. ' +
+    'Stay faithful to the passage — do not contradict it or add claims about the author\'s life. Write an explanation, not a rewrite of the passage.',
   metaphors:
     'Give 3 metaphors or analogies that explain the main idea of the passage better, each drawn from everyday life. ' +
     'Output only the list: one "- " line per metaphor, one or two sentences each. Do not repeat or rewrite the passage.',
@@ -54,7 +71,7 @@ const TASKS: Record<string, string> = {
 const WORD_TASKS = new Set(['synonyms'])
 
 // how adventurous the wording may be: cautious for corrections, freer for creative rewrites
-const TEMPERATURE: Record<string, number> = { synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
+const TEMPERATURE: Record<string, number> = { formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''

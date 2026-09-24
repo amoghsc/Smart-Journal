@@ -7,7 +7,9 @@ import { supabase } from './supabase'
  * To add a tool: add an entry to AI_TASKS here and a prompt with the same id in the function's TASKS map.
  */
 
-export type AiTaskId = 'synonyms' | 'grammar' | 'shorten' | 'summarise' | 'expand' | 'simpler' | 'funny' | 'emotional' | 'metaphors'
+export type AiTaskId = 'synonyms' | 'grammar' | 'shorten' | 'summarise' | 'expand'
+  | 'formal' | 'friendly' | 'casual' | 'genz' | 'simpler' | 'funny' | 'emotional'
+  | 'elaborate' | 'metaphors'
 
 export interface AiTask {
   id: AiTaskId
@@ -33,9 +35,14 @@ export const AI_TASKS: AiTask[] = [
   { id: 'shorten', label: 'Make shorter', busy: 'Shortening…', mode: 'replace', group: 'Length' },
   { id: 'summarise', label: 'Summarise', busy: 'Summarising…', mode: 'replace', group: 'Length' },
   { id: 'expand', label: 'Expand', busy: 'Expanding…', mode: 'replace', group: 'Length' },
+  { id: 'formal', label: 'Formal', busy: 'Making it formal…', mode: 'replace', group: 'Tone' },
+  { id: 'friendly', label: 'Friendly', busy: 'Making it friendly…', mode: 'replace', group: 'Tone' },
+  { id: 'casual', label: 'Casual', busy: 'Making it casual…', mode: 'replace', group: 'Tone' },
+  { id: 'genz', label: 'Gen Z', busy: 'No cap, rewriting…', mode: 'replace', group: 'Tone' },
   { id: 'simpler', label: 'Simpler language', busy: 'Simplifying…', mode: 'replace', group: 'Tone' },
   { id: 'funny', label: 'Make it funny', busy: 'Adding humour…', mode: 'replace', group: 'Tone' },
   { id: 'emotional', label: 'More emotional', busy: 'Adding feeling…', mode: 'replace', group: 'Tone' },
+  { id: 'elaborate', label: 'Elaborate this concept', busy: 'Elaborating…', mode: 'after', heading: 'Elaborated', group: 'Explain' },
   { id: 'metaphors', label: 'Metaphors to explain it', busy: 'Finding metaphors…', mode: 'after', heading: 'Metaphors', group: 'Explain' },
 ]
 

@@ -409,9 +409,12 @@ p.small { margin: 0; line-height: 1.45; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* AI menu (opens from ✨ in the selection menu; grows with the task list) */
-.ai-menu { display: flex; flex-direction: column; min-width: 210px; padding: 2px 0 4px; }
+.ai-menu { display: flex; flex-direction: column; min-width: 210px; padding: 2px 0 4px; max-height: min(60vh, 460px); overflow-y: auto; overscroll-behavior: contain; }
+.ai-menu-head { position: sticky; top: -2px; background: var(--bg); z-index: 1; }
 .ai-menu-head { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; font-size: 12px; font-weight: 600; color: #8b5cf6; }
 .ai-menu-head button { margin-left: auto; width: 22px !important; height: 22px !important; }
+.ai-group { display: flex; flex-direction: column; }
+.bubble { max-width: calc(100vw - 16px); }
 .ai-group + .ai-group { border-top: 1px solid var(--line); margin-top: 3px; padding-top: 3px; }
 .ai-group-name { padding: 3px 8px 1px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .bubble .ai-item { width: 100% !important; height: auto !important; min-height: 28px; justify-content: space-between !important; gap: 10px; padding: 4px 8px !important; font-size: 13.5px; color: var(--fg) !important; text-align: left; }

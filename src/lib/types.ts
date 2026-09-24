@@ -28,6 +28,8 @@ export interface Page {
   updated_at: string
   /** Held back when its vault is published. */
   draft?: boolean
+  /** Seconds spent with this note open and in use (see lib/activeTime). */
+  active_seconds?: number
   /** Local only: created with "+" but not yet written to the database (dropped if left empty). */
   local?: boolean
 }

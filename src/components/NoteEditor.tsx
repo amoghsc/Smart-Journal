@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
-import { Bold, Check, Highlighter, Italic, Link2, Link2Off, MessageSquarePlus, Plus, Unlink } from 'lucide-react'
+import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
+import { aiAvailable, aiTextToContent, runAi } from '../lib/ai'
+import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import Highlight from '@tiptap/extension-highlight'
@@ -87,6 +89,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const [linkUrl, setLinkUrl] = useState('')
   const [linkErr, setLinkErr] = useState(false)
   const openLinkField = useRef<() => void>(() => {})
+
+  // AI tools (✨): a row in the selection menu; the request runs on the server
+  const [aiMode, setAiMode] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
 
   // [[ picker
   const [suggest, setSuggest] = useState<SuggestState | null>(null)
@@ -176,7 +182,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       },
     },
     onUpdate: ({ editor }) => change.current(editor.getHTML()),
-    onSelectionUpdate: () => { setLinkMode(false); setLinkErr(false) },
+    onSelectionUpdate: () => { setLinkMode(false); setLinkErr(false); setAiMode(false) },
   })
 
   useEffect(() => { ready.current?.(editor); return () => ready.current?.(null) }, [editor])
@@ -192,6 +198,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       bold: e?.isActive('bold') ?? false,
       italic: e?.isActive('italic') ?? false,
       highlight: e?.isActive('highlight') ?? false,
+      strike: e?.isActive('strike') ?? false,
       link: e?.isActive('link') ?? false,
     }),
   })
@@ -212,6 +219,28 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   }
   const removeLink = () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkMode(false) }
   const cancelLink = () => { setLinkMode(false); editor?.commands.focus() }
+
+  /** Replace the selected text with its summary. Undo (⌘Z) brings the original back. */
+  const summarise = async () => {
+    if (!editor || aiBusy) return
+    if (!(await aiAvailable())) { toast('AI isn’t set up yet', 'Add GEMINI_API_KEY to the Supabase function secrets'); return }
+    const { from, to } = editor.state.selection
+    const text = editor.state.doc.textBetween(from, to, '\n\n', ' ')
+    if (!text.trim()) return
+    const docBefore = editor.state.doc
+    setAiBusy(true)
+    try {
+      const out = await runAi('summarise', text)
+      if (editor.state.doc !== docBefore) { toast('The note changed while summarising', 'Select the text and try again'); return }
+      const content = aiTextToContent(out)
+      editor.chain().focus().insertContentAt({ from, to }, 'inline' in content ? content.inline : content.html).run()
+      setAiMode(false)
+    } catch (e) {
+      toast('Couldn’t summarise', (e as Error).message)
+    } finally {
+      setAiBusy(false)
+    }
+  }
 
   const addComment = () => {
     if (!editor) return
@@ -234,8 +263,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode) && e.isEditable}>
-          {linkMode ? (
+        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || aiBusy) && e.isEditable}>
+          {aiMode || aiBusy ? (
+            <div className="bubble-row bubble-ai">
+              {aiBusy
+                ? <span className="ai-busy"><Loader2 size={14} className="spin" /> Summarising…</span>
+                : <>
+                    <button className="ai-action" title="Replace the selection with a short summary" onMouseDown={keep} onClick={summarise}><Sparkles size={14} /> Summarise</button>
+                    <span className="bubble-sep" />
+                    <button title="Back" onMouseDown={keep} onClick={() => setAiMode(false)}><X size={14} /></button>
+                  </>}
+            </div>
+          ) : linkMode ? (
             <div className="bubble-row bubble-link">
               <Link2 size={14} className="bubble-link-icon" />
               <input autoFocus value={linkUrl} placeholder="Paste or type a link…" aria-label="Link address" className={linkErr ? 'bad' : ''}
@@ -248,8 +287,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
             <div className="bubble-row">
               <button className={active?.bold ? 'on' : ''} title="Bold (⌘B)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
               <button className={active?.italic ? 'on' : ''} title="Italic (⌘I)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
+              <button className={active?.strike ? 'on' : ''} title="Strikethrough (⌘⇧S)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
               <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
+              <span className="bubble-sep" />
+              <button className="ai-btn" title="AI" onMouseDown={keep} onClick={() => setAiMode(true)}><Sparkles size={15} /></button>
               {comments && <>
                 <span className="bubble-sep" />
                 <button title="Comment on this text" onMouseDown={keep} onClick={addComment}><MessageSquarePlus size={15} /></button>

@@ -391,3 +391,19 @@ p.small { margin: 0; line-height: 1.45; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast-msg { font-size: 14px; font-weight: 500; }
 .toast-detail { font-size: 12px; opacity: 0.75; word-break: break-all; }
+
+/* strikethrough: crossed out and faded 30% towards the background, in both themes */
+.note s { text-decoration: line-through; color: color-mix(in srgb, currentColor 70%, var(--bg)); }
+
+/* time spent, after the word count */
+.wc-time { color: var(--muted); }
+
+/* AI row in the selection menu */
+.ai-btn { color: #8b5cf6 !important; }
+.ai-btn:hover { background: rgba(139, 92, 246, 0.12) !important; }
+.bubble-ai { padding: 0 2px; }
+.ai-action { width: auto !important; padding: 0 8px !important; gap: 6px; font-size: 13px; color: var(--fg) !important; }
+.ai-action svg { color: #8b5cf6; }
+.ai-busy { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; height: 26px; font-size: 13px; color: var(--muted); }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

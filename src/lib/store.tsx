@@ -5,7 +5,7 @@ import type { CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
 
-const PAGE_COLS = 'id,vault_id,title,kind,body,draft,created_at,updated_at'
+const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,created_at,updated_at'
 
 interface Store {
   session: Session | null
@@ -35,6 +35,8 @@ interface Store {
   deletePage: (id: string) => Promise<void>
   setDraft: (id: string, draft: boolean) => Promise<void>
   copyPages: (ids: string[], vaultId: string) => Promise<number>
+  /** Add time spent to a note (atomic on the server; does not change updated_at). */
+  addTime: (id: string, seconds: number) => Promise<void>
   createVault: (name: string, kind: VaultKind) => Promise<Vault>
   updateVault: (id: string, patch: Partial<Vault>) => Promise<void>
   deleteVault: (id: string) => Promise<void>
@@ -113,7 +115,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const row = payload.new as Page
         if (timers.current.has(row.id)) return
         const cur = latest.current.get(row.id)
-        if (cur && cur.updated_at >= row.updated_at && cur.body === row.body && cur.title === row.title) return
+        if (cur && cur.updated_at >= row.updated_at && cur.body === row.body && cur.title === row.title) {
+          // only the time spent changed (another device, or our own save echoing back)
+          if ((row.active_seconds ?? 0) > (cur.active_seconds ?? 0)) upsertLocal({ ...cur, active_seconds: row.active_seconds })
+          return
+        }
         upsertLocal(row)
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'nt_vaults' }, () => { reload() })
@@ -292,6 +298,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return out.length
   }, [byId])
 
+  const addTime = useCallback(async (id: string, seconds: number) => {
+    const { data, error } = await supabase.rpc('nt_add_time', { page: id, secs: seconds })
+    if (error) throw error
+    const p = latest.current.get(id)
+    if (p && typeof data === 'number') upsertLocal({ ...p, active_seconds: data })
+  }, [])
+
   // ---- vaults ----
   const createVault = useCallback(async (name: string, kind: VaultKind) => {
     const v: Vault = {
@@ -355,7 +368,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: Store = {
     session, ready, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
-    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages,
+    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime,
     createVault, updateVault, deleteVault, reload, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

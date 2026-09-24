@@ -263,6 +263,7 @@ input[type=search]::-webkit-search-cancel-button { display: none; }
 .note a:hover { text-decoration-color: var(--accent); }
 .note a.wikilink { color: inherit; text-decoration: underline; text-decoration-color: var(--muted); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .note mark { background: #fff1a8; color: inherit; padding: 0 1px; border-radius: 2px; }
+.note s { text-decoration: line-through; color: color-mix(in srgb, currentColor 70%, var(--bg)); }
 :root[data-theme="dark"] .note mark { background: rgba(250, 204, 21, 0.32); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .note mark { background: rgba(250, 204, 21, 0.32); } }
 .note a.wikilink:hover { text-decoration-color: var(--fg); }

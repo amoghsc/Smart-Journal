@@ -3,6 +3,7 @@ import { Globe, LayoutGrid, PanelLeft, Settings } from 'lucide-react'
 import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
+import { startActiveTime } from './lib/activeTime'
 import { Login } from './views/Login'
 import { PagePane } from './views/PagePane'
 import { Sidebar } from './views/Sidebar'
@@ -30,7 +31,7 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, vault, setVault, getPage, createLocal, discardLocal } = useStore()
+  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
   const [panes, setPanes] = useState<string[]>(() => [todayTitle()])
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 800px)').matches)
@@ -159,6 +160,11 @@ function Workspace({ email }: { email: string }) {
 
   const visible = narrow ? [panes[panes.length - 1]] : canvasOpen ? [panes[0]] : panes
   const showCanvas = !narrow && canvasOpen
+
+  // time spent: every saved note on screen accrues while you're active (see lib/activeTime)
+  const onScreen = useRef<string[]>([])
+  onScreen.current = visible.map(t => getPage(t)).filter(p => p && !p.local).map(p => p!.id)
+  useEffect(() => startActiveTime(() => onScreen.current, addTime), [addTime])
 
   return (
     <div className="shell">

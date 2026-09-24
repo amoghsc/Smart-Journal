@@ -3,6 +3,7 @@ import type { Editor } from '@tiptap/react'
 import { CalendarDays, ChevronLeft, ChevronRight, EyeOff, Globe, MessageSquare, MessageSquareOff, Share, SquareSplitHorizontal, Trash2, X } from 'lucide-react'
 import { planSite } from '../lib/publish'
 import { copyText, toast } from '../lib/toast'
+import { formatDuration, useUnsavedSeconds } from '../lib/activeTime'
 import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
@@ -169,7 +170,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
         )}
         <input ref={dateInput} type="date" className="date-hidden" tabIndex={-1} aria-hidden
           onChange={e => { const cb = datePending.current; datePending.current = null; cb?.(e.target.value || null) }} />
-        <span className="wc" title="Words in this note">{words} {words === 1 ? 'word' : 'words'}</span>
+        <span className="wc" title="Words in this note">{words} {words === 1 ? 'word' : 'words'}<NoteTime saved={page?.active_seconds ?? 0} id={page?.local ? undefined : page?.id} /></span>
         <div className="pane-actions">
           {page && vault?.kind === 'public' && (
             <button className={'icon-btn' + (page.draft ? ' on' : '')} title={page.draft ? 'Held back — click to include when publishing' : 'Included when publishing — click to hold back'}
@@ -212,4 +213,11 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
       </>}
     </div>
   )
+}
+
+/** Time spent on the note: the saved total plus what this device hasn't saved yet. Re-renders on its own. */
+function NoteTime({ saved, id }: { saved: number; id: string | undefined }) {
+  const unsaved = useUnsavedSeconds(id)
+  const text = formatDuration(saved + unsaved)
+  return text ? <span className="wc-time" title="Time spent on this note while you were active"> · {text}</span> : null
 }

@@ -3,7 +3,7 @@ import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/r
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { aiAvailable, aiTextToContent, runAi } from '../lib/ai'
+import { AI_TASKS, aiAvailable, runAi, selectionToText, textToContent, type AiTask } from '../lib/ai'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -92,7 +92,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // AI tools (✨): a row in the selection menu; the request runs on the server
   const [aiMode, setAiMode] = useState(false)
-  const [aiBusy, setAiBusy] = useState(false)
+  const [aiBusy, setAiBusy] = useState<AiTask | null>(null)
 
   // [[ picker
   const [suggest, setSuggest] = useState<SuggestState | null>(null)
@@ -220,25 +220,32 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const removeLink = () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkMode(false) }
   const cancelLink = () => { setLinkMode(false); editor?.commands.focus() }
 
-  /** Replace the selected text with its summary. Undo (⌘Z) brings the original back. */
-  const summarise = async () => {
+  /** Run an AI tool on the selection: replace it, or add the result below it. Undo (⌘Z) reverts either. */
+  const runTask = async (task: AiTask) => {
     if (!editor || aiBusy) return
     if (!(await aiAvailable())) { toast('AI isn’t set up yet', 'Add GEMINI_API_KEY to the Supabase function secrets'); return }
     const { from, to } = editor.state.selection
-    const text = editor.state.doc.textBetween(from, to, '\n\n', ' ')
+    const text = selectionToText(editor.state.doc, from, to)
     if (!text.trim()) return
     const docBefore = editor.state.doc
-    setAiBusy(true)
+    setAiBusy(task)
     try {
-      const out = await runAi('summarise', text)
-      if (editor.state.doc !== docBefore) { toast('The note changed while summarising', 'Select the text and try again'); return }
-      const content = aiTextToContent(out)
-      editor.chain().focus().insertContentAt({ from, to }, 'inline' in content ? content.inline : content.html).run()
+      const out = await runAi(task.id, text)
+      if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
+      if (task.mode === 'replace') {
+        editor.chain().focus().insertContentAt({ from, to }, textToContent(out)).run()
+      } else {
+        // after the top-level block the selection ends in (after the whole list, if it's in one)
+        const $to = editor.state.doc.resolve(to)
+        const at = $to.depth > 0 ? $to.after(1) : to
+        const label = task.heading ? `<p><em>${task.heading}</em></p>` : ''
+        editor.chain().focus().insertContentAt(at, label + textToContent(out, false)).run()
+      }
       setAiMode(false)
     } catch (e) {
-      toast('Couldn’t summarise', (e as Error).message)
+      toast(`Couldn’t ${task.label.toLowerCase()}`, (e as Error).message)
     } finally {
-      setAiBusy(false)
+      setAiBusy(null)
     }
   }
 
@@ -251,6 +258,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   const keep = (e: React.MouseEvent) => e.preventDefault()   // buttons must not steal the editor's selection
   const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
+  const aiGroups = AI_TASKS.reduce<[string, AiTask[]][]>((acc, t) => {
+    const g = acc.find(([name]) => name === t.group)
+    if (g) g[1].push(t); else acc.push([t.group, [t]])
+    return acc
+  }, [])
 
   // [[ picker position: under the caret, or above it near the bottom of the window
   const suggestStyle = (() => {
@@ -263,16 +275,26 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || aiBusy) && e.isEditable}>
-          {aiMode || aiBusy ? (
-            <div className="bubble-row bubble-ai">
-              {aiBusy
-                ? <span className="ai-busy"><Loader2 size={14} className="spin" /> Summarising…</span>
-                : <>
-                    <button className="ai-action" title="Replace the selection with a short summary" onMouseDown={keep} onClick={summarise}><Sparkles size={14} /> Summarise</button>
-                    <span className="bubble-sep" />
-                    <button title="Back" onMouseDown={keep} onClick={() => setAiMode(false)}><X size={14} /></button>
-                  </>}
+        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || !!aiBusy) && e.isEditable}>
+          {aiBusy ? (
+            <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
+          ) : aiMode ? (
+            <div className="ai-menu" role="menu" aria-label="AI">
+              <div className="ai-menu-head">
+                <Sparkles size={13} /> AI
+                <button title="Back" aria-label="Back" onMouseDown={keep} onClick={() => setAiMode(false)}><X size={13} /></button>
+              </div>
+              {aiGroups.map(([group, tasks]) => (
+                <div key={group} className="ai-group">
+                  <div className="ai-group-name">{group}</div>
+                  {tasks.map(t => (
+                    <button key={t.id} role="menuitem" className="ai-item" onMouseDown={keep} onClick={() => runTask(t)}
+                      title={t.mode === 'after' ? 'Adds the result below your text' : 'Replaces the selected text (⌘Z to undo)'}>
+                      {t.label}{t.mode === 'after' && <span className="ai-note">adds below</span>}
+                    </button>
+                  ))}
+                </div>
+              ))}
             </div>
           ) : linkMode ? (
             <div className="bubble-row bubble-link">

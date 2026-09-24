@@ -11,14 +11,44 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 const ALLOWED_ORIGINS = ['https://amoghsc.github.io', 'http://localhost:5183']
 const MAX_CHARS = 40_000
 
+// Shared by every task. The text arrives with light markup that must survive the rewrite.
+const COMMON =
+  ' The passage is from the user\'s own notes. Write in the same language as the passage (Marathi stays Marathi, Hindi stays Hindi). ' +
+  'The passage may contain markup: lines starting with "- " are bullets and "1. " numbered items (keep them as lists when the result is a list), ' +
+  '[[Title]] is a link to another note and [words](https://…) a link to a website — keep every such link exactly as written, including the brackets. ' +
+  'Output only the resulting text: plain text with blank lines between paragraphs, no headings, no bold or italics, no quotation marks around it, ' +
+  'and no preamble or comment such as "Here is…".'
+
 const TASKS: Record<string, string> = {
+  grammar:
+    'Correct spelling, grammar and punctuation. Change nothing else: keep the wording, tone, structure and length. ' +
+    'If the passage is already correct, return it unchanged.',
+  shorten:
+    'Make the passage shorter — about half its length — by tightening sentences and removing repetition and filler. ' +
+    'Keep every point, the author\'s voice and first person, and the structure. This is a tighter version of the same text, not a summary about it.',
   summarise:
-    'You summarise a passage from the user\'s own notes. Use only the passage: add no facts, opinions or advice that are not in it. ' +
-    'Keep the author\'s voice and point of view, and write in the same language as the passage (Marathi stays Marathi, Hindi stays Hindi). ' +
-    'Aim for roughly a quarter of the original length, keeping names, decisions, dates and commitments. ' +
-    'Write plain text: short paragraphs, or lines starting with "- " if the passage is itself a list. ' +
-    'No headings, no bold or other markdown, no preamble such as "Here is a summary".',
+    'Summarise the passage. Use only the passage: add no facts, opinions or advice that are not in it. ' +
+    'Keep the author\'s voice and point of view. Aim for roughly a quarter of the original length, keeping names, decisions, dates and commitments. ' +
+    'Use short paragraphs, or "- " lines if the passage is itself a list.',
+  expand:
+    'Expand the passage to about twice its length by developing the ideas already in it: explain the reasoning, add texture and connecting sentences. ' +
+    'Keep the author\'s voice and first person. Do not invent specific facts about the author\'s life — no new names, events, places or numbers.',
+  simpler:
+    'Rewrite the passage in simpler language: short sentences, everyday words, no jargon, readable by a 12-year-old. ' +
+    'Keep the meaning, every point and the author\'s first person.',
+  funny:
+    'Rewrite the passage to be funny — playful, witty, light — while keeping its meaning and every point. ' +
+    'Keep the author\'s first person. Gentle humour only: no mean, crude or offensive jokes.',
+  emotional:
+    'Rewrite the passage to be more emotional: bring out the feelings behind it with vivid, heartfelt language. ' +
+    'Keep the meaning, the facts and the author\'s first person. Do not invent events or people.',
+  metaphors:
+    'Give 3 metaphors or analogies that explain the main idea of the passage better, each drawn from everyday life. ' +
+    'Output only the list: one "- " line per metaphor, one or two sentences each. Do not repeat or rewrite the passage.',
 }
+
+// how adventurous the wording may be: cautious for corrections, freer for creative rewrites
+const TEMPERATURE: Record<string, number> = { grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''
@@ -32,11 +62,11 @@ function corsHeaders(req: Request): Record<string, string> {
 
 class HttpError extends Error { constructor(public status: number, message: string) { super(message) } }
 
-async function gemini(key: string, models: string[], system: string, text: string): Promise<{ text: string; model: string }> {
+async function gemini(key: string, models: string[], system: string, text: string, temperature: number): Promise<{ text: string; model: string }> {
   const body = {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text }] }],
-    generationConfig: { temperature: 0.3, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { temperature, thinkingConfig: { thinkingBudget: 0 } },
   }
   let last = ''
   for (let i = 0; i < models.length; i++) {
@@ -84,7 +114,7 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'status') return json(200, { configured: !!geminiKey, tasks: Object.keys(TASKS) })
     if (!geminiKey) throw new HttpError(412, 'AI isn’t set up yet')
 
-    const system = TASKS[body.task]
+    const system = TASKS[body.task] ? TASKS[body.task] + COMMON : undefined
     if (!system) throw new HttpError(400, 'Unknown task')
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (!text) throw new HttpError(400, 'Select some text first')
@@ -92,7 +122,7 @@ Deno.serve(async (req: Request) => {
 
     const main = Deno.env.get('GEMINI_MODEL') || 'gemini-3.6-flash'
     const fallbacks = (Deno.env.get('GEMINI_FALLBACKS') || 'gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(s => s.trim()).filter(Boolean)
-    const result = await gemini(geminiKey, [main, ...fallbacks.filter(m => m !== main)], system, text)
+    const result = await gemini(geminiKey, [main, ...fallbacks.filter(m => m !== main)], system, text, TEMPERATURE[body.task] ?? 0.4)
     return json(200, result)
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500

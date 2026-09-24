@@ -3,7 +3,7 @@ import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/r
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { AI_TASKS, aiAvailable, runAi, selectionToText, textToContent, type AiTask } from '../lib/ai'
+import { AI_TASKS, aiAvailable, parseChoices, runAi, selectionToText, singleWord, textToContent, wordInContext, type AiTask } from '../lib/ai'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -93,6 +93,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   // AI tools (✨): a row in the selection menu; the request runs on the server
   const [aiMode, setAiMode] = useState(false)
   const [aiBusy, setAiBusy] = useState<AiTask | null>(null)
+  // options from a 'choose' task (similar words), waiting for a pick
+  const [choices, setChoices] = useState<{ word: string; from: number; to: number; options: string[] } | null>(null)
 
   // [[ picker
   const [suggest, setSuggest] = useState<SuggestState | null>(null)
@@ -182,7 +184,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       },
     },
     onUpdate: ({ editor }) => change.current(editor.getHTML()),
-    onSelectionUpdate: () => { setLinkMode(false); setLinkErr(false); setAiMode(false) },
+    onSelectionUpdate: () => { setLinkMode(false); setLinkErr(false); setAiMode(false); setChoices(null) },
   })
 
   useEffect(() => { ready.current?.(editor); return () => ready.current?.(null) }, [editor])
@@ -199,6 +201,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       italic: e?.isActive('italic') ?? false,
       highlight: e?.isActive('highlight') ?? false,
       strike: e?.isActive('strike') ?? false,
+      word: e ? singleWord(e.state.doc, e.state.selection.from, e.state.selection.to) : null,
       link: e?.isActive('link') ?? false,
     }),
   })
@@ -225,13 +228,21 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     if (!editor || aiBusy) return
     if (!(await aiAvailable())) { toast('AI isn’t set up yet', 'Add GEMINI_API_KEY to the Supabase function secrets'); return }
     const { from, to } = editor.state.selection
-    const text = selectionToText(editor.state.doc, from, to)
+    const word = singleWord(editor.state.doc, from, to)
+    if (task.wordOnly && !word) return
+    const text = task.wordOnly ? wordInContext(editor.state.doc, from, word!) : selectionToText(editor.state.doc, from, to)
     if (!text.trim()) return
     const docBefore = editor.state.doc
     setAiBusy(task)
     try {
       const out = await runAi(task.id, text)
       if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
+      if (task.mode === 'choose') {
+        const options = parseChoices(out, word ?? '')
+        if (!options.length) { toast('No similar words found'); return }
+        setChoices({ word: word ?? '', from, to, options })
+        return
+      }
       if (task.mode === 'replace') {
         editor.chain().focus().insertContentAt({ from, to }, textToContent(out)).run()
       } else {
@@ -249,6 +260,15 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     }
   }
 
+  /** Swap the chosen word in, keeping the original's formatting (bold, highlight, link…). */
+  const pickChoice = (option: string) => {
+    if (!editor || !choices) return
+    const { from, to } = choices
+    editor.chain().focus().command(({ tr }) => { tr.insertText(option, from, to); return true })
+      .setTextSelection({ from, to: from + option.length }).run()
+    setChoices(null); setAiMode(false)
+  }
+
   const addComment = () => {
     if (!editor) return
     const id = crypto.randomUUID()
@@ -258,7 +278,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   const keep = (e: React.MouseEvent) => e.preventDefault()   // buttons must not steal the editor's selection
   const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
-  const aiGroups = AI_TASKS.reduce<[string, AiTask[]][]>((acc, t) => {
+  const aiGroups = AI_TASKS.filter(t => !t.wordOnly || active?.word).reduce<[string, AiTask[]][]>((acc, t) => {
     const g = acc.find(([name]) => name === t.group)
     if (g) g[1].push(t); else acc.push([t.group, [t]])
     return acc
@@ -275,9 +295,19 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || !!aiBusy) && e.isEditable}>
+        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || !!aiBusy || !!choices) && e.isEditable}>
           {aiBusy ? (
             <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
+          ) : choices ? (
+            <div className="ai-menu ai-choices" role="menu" aria-label={`Similar to ${choices.word}`}>
+              <div className="ai-menu-head">
+                <Sparkles size={13} /> Similar to “{choices.word}”
+                <button title="Back" aria-label="Back" onMouseDown={keep} onClick={() => setChoices(null)}><X size={13} /></button>
+              </div>
+              <div className="ai-chips">
+                {choices.options.map(o => <button key={o} role="menuitem" className="ai-chip" onMouseDown={keep} onClick={() => pickChoice(o)}>{o}</button>)}
+              </div>
+            </div>
           ) : aiMode ? (
             <div className="ai-menu" role="menu" aria-label="AI">
               <div className="ai-menu-head">

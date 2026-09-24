@@ -42,13 +42,19 @@ const TASKS: Record<string, string> = {
   emotional:
     'Rewrite the passage to be more emotional: bring out the feelings behind it with vivid, heartfelt language. ' +
     'Keep the meaning, the facts and the author\'s first person. Do not invent events or people.',
+  synonyms:
+    'The input gives one word and the sentence it appears in. List up to 8 words or short phrases with a similar meaning that would fit in its place in that sentence, ' +
+    'in the same language and script as the word, matching its form (tense, number, gender, case). Most natural first. ' +
+    'Output one per line and nothing else — no numbering, bullets, explanations or the original word.',
   metaphors:
     'Give 3 metaphors or analogies that explain the main idea of the passage better, each drawn from everyday life. ' +
     'Output only the list: one "- " line per metaphor, one or two sentences each. Do not repeat or rewrite the passage.',
 }
 
+const WORD_TASKS = new Set(['synonyms'])
+
 // how adventurous the wording may be: cautious for corrections, freer for creative rewrites
-const TEMPERATURE: Record<string, number> = { grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
+const TEMPERATURE: Record<string, number> = { synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''
@@ -62,33 +68,47 @@ function corsHeaders(req: Request): Record<string, string> {
 
 class HttpError extends Error { constructor(public status: number, message: string) { super(message) } }
 
+/** Google's own reason from an error body (it never echoes the user's text). */
+function googleMessage(raw: string): string {
+  try { const m = JSON.parse(raw)?.error?.message; if (typeof m === 'string') return m.slice(0, 240) } catch { /* not JSON */ }
+  return raw.slice(0, 240)
+}
+
+/**
+ * One generateContent call with fallbacks. A model that rejects the request (400) is retried once without the
+ * thinking setting — some models refuse to have thinking turned off — before moving on to the next model.
+ */
 async function gemini(key: string, models: string[], system: string, text: string, temperature: number): Promise<{ text: string; model: string }> {
-  const body = {
+  const request = (thinkingOff: boolean) => ({
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text }] }],
-    generationConfig: { temperature, thinkingConfig: { thinkingBudget: 0 } },
-  }
-  let last = ''
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i]
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify(body),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      const out = (data?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('').trim()
-      if (!out) throw new HttpError(502, data?.promptFeedback?.blockReason ? 'Gemini declined this text' : 'Gemini returned nothing')
-      return { text: out, model }
+    generationConfig: thinkingOff ? { temperature, thinkingConfig: { thinkingBudget: 0 } } : { temperature },
+  })
+  let lastStatus = 0, lastMessage = ''
+  for (const model of models) {
+    for (const thinkingOff of [true, false]) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify(request(thinkingOff)),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const out = (data?.candidates?.[0]?.content?.parts ?? []).filter((p: { thought?: boolean }) => !p.thought)
+          .map((p: { text?: string }) => p.text ?? '').join('').trim()
+        if (!out) throw new HttpError(502, data?.promptFeedback?.blockReason ? 'Gemini declined this text' : 'Gemini returned nothing')
+        return { text: out, model }
+      }
+      lastStatus = res.status
+      lastMessage = googleMessage(await res.text())
+      console.error('nt-ai gemini', model, thinkingOff ? 'thinking-off' : 'default', res.status, lastMessage)
+      // a bad or restricted key fails the same way on every model
+      if (/api key|API_KEY/i.test(lastMessage)) throw new HttpError(502, `Gemini rejected the API key: ${lastMessage}`)
+      if (res.status !== 400 || !thinkingOff) break
     }
-    last = `${res.status} ${(await res.text()).slice(0, 200)}`
-    if ((res.status === 429 || res.status === 503 || res.status === 404) && i < models.length - 1) continue
-    if (res.status === 429) throw new HttpError(429, 'The free Gemini quota is used up for now — try again in a minute')
-    if (res.status === 400 || res.status === 403) throw new HttpError(502, 'Gemini rejected the request — check the API key')
-    break
   }
-  throw new HttpError(502, `Gemini is unavailable right now (${last.split(' ')[0]})`)
+  if (lastStatus === 429) throw new HttpError(429, 'The free Gemini quota is used up for now — try again in a minute')
+  throw new HttpError(502, `Gemini couldn’t do this (${lastStatus}): ${lastMessage}`)
 }
 
 Deno.serve(async (req: Request) => {
@@ -114,7 +134,8 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'status') return json(200, { configured: !!geminiKey, tasks: Object.keys(TASKS) })
     if (!geminiKey) throw new HttpError(412, 'AI isn’t set up yet')
 
-    const system = TASKS[body.task] ? TASKS[body.task] + COMMON : undefined
+    // word-level tasks have their own output format; the shared rules are for rewriting passages
+    const system = TASKS[body.task] ? TASKS[body.task] + (WORD_TASKS.has(body.task) ? '' : COMMON) : undefined
     if (!system) throw new HttpError(400, 'Unknown task')
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (!text) throw new HttpError(400, 'Select some text first')

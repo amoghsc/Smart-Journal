@@ -417,3 +417,9 @@ p.small { margin: 0; line-height: 1.45; }
 .bubble .ai-item { width: 100% !important; height: auto !important; min-height: 28px; justify-content: space-between !important; gap: 10px; padding: 4px 8px !important; font-size: 13.5px; color: var(--fg) !important; text-align: left; }
 .bubble .ai-item:hover { background: var(--bg3); }
 .ai-note { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+/* similar words: options as chips */
+.ai-choices { max-width: 320px; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 8px 6px; }
+.bubble .ai-chip { width: auto !important; height: 26px !important; padding: 0 10px !important; border-radius: 13px !important; border: 1px solid var(--line) !important; background: var(--bg2) !important; color: var(--fg) !important; font-size: 13.5px; }
+.bubble .ai-chip:hover { border-color: #8b5cf6 !important; background: rgba(139, 92, 246, 0.1) !important; }

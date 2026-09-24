@@ -33,7 +33,12 @@ export default function App() {
 function Workspace({ email }: { email: string }) {
   const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
-  const [panes, setPanes] = useState<string[]>(() => [todayTitle()])
+  // a fresh start opens today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
+  const [panes, setPanes] = useState<string[]>(() => {
+    try { const s = JSON.parse(sessionStorage.getItem('sj-panes') ?? 'null'); if (Array.isArray(s) && s.length && s.every(t => typeof t === 'string')) return s } catch { /* none saved */ }
+    return [todayTitle()]
+  })
+  useEffect(() => { try { sessionStorage.setItem('sj-panes', JSON.stringify(panes)) } catch { /* private mode */ } }, [panes])
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 800px)').matches)
   const [sidebar, setSidebar] = useState(() => localStorage.getItem('sidebar') !== '0')
   const [searchOpen, setSearchOpen] = useState(false)

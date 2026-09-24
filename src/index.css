@@ -426,3 +426,10 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 8px 6px; }
 .bubble .ai-chip { width: auto !important; height: 26px !important; padding: 0 10px !important; border-radius: 13px !important; border: 1px solid var(--line) !important; background: var(--bg2) !important; color: var(--fg) !important; font-size: 13.5px; }
 .bubble .ai-chip:hover { border-color: #8b5cf6 !important; background: rgba(139, 92, 246, 0.1) !important; }
+
+/* crash screen (instead of a blank page) */
+.crash { max-width: 520px; margin: 0 auto; padding: calc(80px + var(--sat)) 24px 40px; }
+.crash h1 { font-size: 22px; margin: 0 0 10px; }
+.crash p { margin: 0 0 8px; line-height: 1.5; }
+.crash-actions { display: flex; gap: 8px; margin: 18px 0; }
+.crash-details { font-size: 12px; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }

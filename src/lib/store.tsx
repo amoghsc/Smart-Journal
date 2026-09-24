@@ -69,6 +69,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const latest = useRef(new Map<string, Page>())
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writers = useRef(new Map<string, () => Promise<void>>())
+  const inflight = useRef(new Set<string>())   // notes whose save is on its way to the server
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true) })
@@ -86,7 +87,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setVaults((v.data ?? []) as Vault[])
     const rows = (p.data ?? []) as Page[]
     // keep local versions of pages that still have a pending save
-    const merged = rows.map(r => timers.current.has(r.id) ? latest.current.get(r.id) ?? r : r)
+    const merged = rows.map(r => (timers.current.has(r.id) || inflight.current.has(r.id)) ? latest.current.get(r.id) ?? r : r)
     for (const [id, pg] of latest.current) if ((timers.current.has(id) || pg.local) && !merged.some(m => m.id === id)) merged.push(pg)
     latest.current = new Map(merged.map(pg => [pg.id, pg]))
     setAllPages(merged)
@@ -114,15 +115,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setAllPages(prev => prev.filter(p => p.id !== id))
           return
         }
-        const row = payload.new as Page
-        if (timers.current.has(row.id)) return
+        // Update messages can leave fields out: Postgres omits large unchanged values (a long note's body)
+        // from them. So never take the message as the whole note — merge only the fields it carries.
+        const row = payload.new as Partial<Page> & { id: string }
+        if (!row?.id || timers.current.has(row.id) || inflight.current.has(row.id)) return
+        const present = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined && v !== null)) as Partial<Page>
         const cur = latest.current.get(row.id)
-        if (cur && cur.updated_at >= row.updated_at && cur.body === row.body && cur.title === row.title) {
-          // only the time spent changed (another device, or our own save echoing back)
-          if ((row.active_seconds ?? 0) > (cur.active_seconds ?? 0)) upsertLocal({ ...cur, active_seconds: row.active_seconds })
+        if (!cur) {
+          if (typeof row.body === 'string' && typeof row.title === 'string') upsertLocal(row as Page)
+          else fetchPage(row.id)   // new to us and incomplete: read the whole row
           return
         }
-        upsertLocal(row)
+        const textChanged = (present.body !== undefined && present.body !== cur.body) || (present.title !== undefined && present.title !== cur.title)
+        if (!textChanged || (present.updated_at && present.updated_at < cur.updated_at)) {
+          // only the time spent (or nothing we show) changed — e.g. another device, or our own save echoing back
+          if ((present.active_seconds ?? 0) > (cur.active_seconds ?? 0)) upsertLocal({ ...cur, active_seconds: present.active_seconds })
+          return
+        }
+        upsertLocal({ ...cur, ...present })
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'nt_vaults' }, () => { reload() })
       .subscribe()
@@ -169,6 +179,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const getPage = useCallback((title: string) => byTitle.get(normTitle(title)), [byTitle])
 
+  async function fetchPage(id: string) {
+    const { data, error } = await supabase.from('nt_pages').select(PAGE_COLS).eq('id', id).maybeSingle()
+    if (!error && data && !timers.current.has(id)) upsertLocal(data as Page)
+  }
+
   function upsertLocal(p: Page) {
     latest.current.set(p.id, p)
     setAllPages(prev => prev.some(x => x.id === p.id) ? prev.map(x => x.id === p.id ? p : x) : [p, ...prev])
@@ -177,6 +192,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const row = (p: Page) => ({ id: p.id, vault_id: p.vault_id, title: p.title, kind: p.kind, body: p.body, draft: p.draft ?? false, updated_at: p.updated_at })
 
   async function writePage(id: string) {
+    inflight.current.add(id)
+    try { await writePageNow(id) } finally { inflight.current.delete(id) }
+  }
+
+  async function writePageNow(id: string) {
     const p = latest.current.get(id)
     if (!p) return
     if (p.local) return
@@ -249,7 +269,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // links elsewhere follow the page to its new name
     for (const lid of backlinks.get(normTitle(p.title)) ?? []) {
       const l = latest.current.get(lid) ?? byId.get(lid)
-      if (l && l.id !== id) setBody(l.title, relinkTitle(l.body, p.title, next.title))
+      if (l && l.id !== id && typeof l.body === 'string') setBody(l.title, relinkTitle(l.body, p.title, next.title))
     }
   }, [byTitle, byId, backlinks, setBody])
 
@@ -262,7 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // words that linked to the deleted page become plain text again
     if (gone) for (const lid of backlinks.get(normTitle(gone.title)) ?? []) {
       const l = latest.current.get(lid) ?? byId.get(lid)
-      if (l && l.id !== id) setBody(l.title, unlinkTitle(l.body, gone.title))
+      if (l && l.id !== id && typeof l.body === 'string') setBody(l.title, unlinkTitle(l.body, gone.title))
     }
   }, [byId, backlinks, setBody])
 

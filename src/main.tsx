@@ -5,11 +5,17 @@ import './index.css'
 import App from './App'
 import { StoreProvider } from './lib/store'
 import { UpdateBanner } from './components/UpdateBanner'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { watchGlobalErrors } from './lib/errors'
+
+watchGlobalErrors()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <StoreProvider>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
       <UpdateBanner />
     </StoreProvider>
   </StrictMode>,

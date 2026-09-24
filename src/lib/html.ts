@@ -11,6 +11,7 @@ const unescape = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
 
 /** Unique lower-cased titles a body links to via wikilink nodes (<a data-title="…">). */
 export function extractLinks(html: string): string[] {
+  if (typeof html !== 'string') return []
   const out = new Set<string>()
   for (const m of html.matchAll(/data-title="([^"]*)"/g)) {
     const t = normTitle(unescape(m[1]))
@@ -26,16 +27,19 @@ const linkRe = (title: string) => new RegExp(`<a\\b[^>]*\\bdata-title="${escapeR
 
 /** Turn every link to `title` back into plain text. */
 export function unlinkTitle(html: string, title: string): string {
+  if (typeof html !== 'string') return html   // never turn a missing body into an empty one
   return html.replace(linkRe(title), '$1')
 }
 
 /** Point every link to `from` at `to` instead. */
 export function relinkTitle(html: string, from: string, to: string): string {
+  if (typeof html !== 'string') return html
   return html.replace(linkRe(from), () => `<a class="wikilink" href="#" data-title="${escapeAttr(to)}">${escapeAttr(to)}</a>`)
 }
 
 /** Rough plain-text version for excerpts and search. */
 export function plainText(html: string, max = 200): string {
+  if (typeof html !== 'string') return ''
   const t = unescape(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
   return max && t.length > max ? t.slice(0, max) + '…' : t
 }

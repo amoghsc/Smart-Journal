@@ -253,7 +253,7 @@ p.small { margin: 0; line-height: 1.45; }
 .badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--bg3); color: var(--muted); margin-left: 8px; vertical-align: middle; }
 
 /* unlink popover (hover, pointer devices) */
-.unlink-pop { position: fixed; z-index: 60; padding-bottom: 6px; }
+.unlink-pop { position: fixed; z-index: 60; }
 .unlink-pop button { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; font-size: 12px; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
 .unlink-pop button:hover { color: var(--fg); background: var(--bg3); }
 @media (hover: none) { .unlink-pop { display: none; } }
@@ -433,3 +433,12 @@ p.small { margin: 0; line-height: 1.45; }
 .crash p { margin: 0 0 8px; line-height: 1.5; }
 .crash-actions { display: flex; gap: 8px; margin: 18px 0; }
 .crash-details { font-size: 12px; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
+
+/* text the AI just wrote: purple wash that fades out over a minute (a decoration — never saved) */
+.ai-fresh { background-color: rgba(139, 92, 246, 0.24); border-radius: 2px; animation: ai-fresh-fade 60s linear forwards; }
+@keyframes ai-fresh-fade { to { background-color: rgba(139, 92, 246, 0); } }
+:root[data-theme="dark"] .ai-fresh { background-color: rgba(167, 139, 250, 0.28); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ai-fresh { background-color: rgba(167, 139, 250, 0.28); } }
+/* it marks what changed, so it fades even with Animations off */
+:root[data-anim="off"] .ai-fresh { animation: ai-fresh-fade 60s linear forwards !important; }
+.fresh-pop button { color: #8b5cf6; }

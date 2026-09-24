@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
+import { PluginKey } from '@tiptap/pm/state'
 import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, aiAvailable, parseChoices, runAi, selectionToText, singleWord, textToContent, wordInContext, type AiTask } from '../lib/ai'
 import { toast } from '../lib/toast'
@@ -13,6 +14,8 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import { EditorKeys, SwallowTab, Wikilink } from '../lib/wikilink'
 import { WikilinkSuggest, matchTitles, type SuggestItem } from '../lib/wikilinkSuggest'
 import { Comment } from '../lib/comment'
+import { AiFresh, markAiFresh } from '../lib/aiFresh'
+import { Undo2 } from 'lucide-react'
 import { isDailyTitle, prettyDate } from '../lib/links'
 
 interface Props {
@@ -34,6 +37,9 @@ interface Props {
 }
 
 const LONG_PRESS_MS = 550
+
+/** Where a small hover button goes: just above the line, or just below it if there's no room above. */
+const popTop = (r: DOMRect) => (r.top - 30 >= 4 ? r.top - 30 : r.bottom + 4)
 
 /** Document position of the wikilink rendered by `el`, or -1. Tries the DOM mapping first, then the element's centre. */
 function wikilinkPos(view: EditorView, el: HTMLElement): number {
@@ -78,6 +84,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // hover "unlink" affordance (pointer devices) and long-press unlink (touch)
   const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number } | null>(null)
+  // hovering text the AI just wrote offers Undo
+  const [hoverFresh, setHoverFresh] = useState<{ id: string; x: number; y: number } | null>(null)
+  const freshTimer = useRef<number | null>(null)
+  const keepFresh = () => { if (freshTimer.current) { clearTimeout(freshTimer.current); freshTimer.current = null } }
+  const dropFresh = () => { keepFresh(); freshTimer.current = window.setTimeout(() => setHoverFresh(null), 300) }
   const hideTimer = useRef<number | null>(null)
   const pressTimer = useRef<number | null>(null)
   const clearHide = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null } }
@@ -136,6 +147,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         }),
       }),
       Comment,
+      AiFresh,
       EditorKeys,
       SwallowTab,
     ],
@@ -164,11 +176,24 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       },
       handleDOMEvents: {
         mouseover: (_view, e) => {
-          const el = (e.target as HTMLElement).closest<HTMLElement>('a.wikilink')
-          if (el) { clearHide(); const r = el.getBoundingClientRect(); setHoverLink({ el, x: r.left, y: r.top }) }
+          const target = e.target as HTMLElement
+          const el = target.closest<HTMLElement>('a.wikilink')
+          if (el) { clearHide(); const r = el.getBoundingClientRect(); setHoverLink({ el, x: r.left, y: popTop(r) }) }
+          const fresh = target.closest<HTMLElement>('[data-ai-fresh]')
+          if (fresh) {
+            keepFresh()
+            // the line under the pointer, not the whole (possibly multi-line) highlight
+            const line = [...fresh.getClientRects()].find(r => e.clientY >= r.top && e.clientY <= r.bottom) ?? fresh.getBoundingClientRect()
+            setHoverFresh({ id: fresh.dataset.aiFresh!, x: Math.max(4, e.clientX - 30), y: popTop(line) })
+          }
           return false
         },
-        mouseout: (_view, e) => { if ((e.target as HTMLElement).closest('a.wikilink')) scheduleHide(); return false },
+        mouseout: (_view, e) => {
+          const target = e.target as HTMLElement
+          if (target.closest('a.wikilink')) scheduleHide()
+          if (target.closest('[data-ai-fresh]')) dropFresh()
+          return false
+        },
         touchstart: (view, e) => {
           const el = (e.target as HTMLElement).closest<HTMLElement>('a.wikilink')
           clearPress()
@@ -233,9 +258,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const text = task.wordOnly ? wordInContext(editor.state.doc, from, word!) : selectionToText(editor.state.doc, from, to)
     if (!text.trim()) return
     const docBefore = editor.state.doc
+    flags.current.aiBusy = true
     setAiBusy(task)
     try {
       const out = await runAi(task.id, text)
+      flags.current.aiBusy = false
       if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
       if (task.mode === 'choose') {
         const options = parseChoices(out, word ?? '')
@@ -244,13 +271,13 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         return
       }
       if (task.mode === 'replace') {
-        editor.chain().focus().insertContentAt({ from, to }, textToContent(out)).run()
+        applyFresh(from, to, textToContent(out), editor.state.doc.slice(from, to))
       } else {
         // after the top-level block the selection ends in (after the whole list, if it's in one)
         const $to = editor.state.doc.resolve(to)
         const at = $to.depth > 0 ? $to.after(1) : to
         const label = task.heading ? `<p><em>${task.heading}</em></p>` : ''
-        editor.chain().focus().insertContentAt(at, label + textToContent(out, false)).run()
+        applyFresh(at, at, label + textToContent(out, false), null)
       }
       setAiMode(false)
     } catch (e) {
@@ -260,14 +287,40 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     }
   }
 
+  /**
+   * Put AI output at [from, to] (a range to replace, or a single point to insert at), highlight it as fresh,
+   * and leave the cursor after it — a collapsed selection, so the toolbar closes.
+   */
+  const applyFresh = (from: number, to: number, content: string, original: ReturnType<NonNullable<typeof editor>['state']['doc']['slice']> | null) => {
+    if (!editor) return
+    let end = to
+    editor.chain().focus().insertContentAt({ from, to }, content, { updateSelection: false }).command(({ tr }) => {
+      const start = tr.mapping.map(from, -1)
+      end = tr.mapping.map(to, 1)
+      markAiFresh(tr, start, end, original)
+      tr.setMeta(bubbleKey, 'hide')
+      return true
+    }).setTextSelection(end).run()
+  }
+
   /** Swap the chosen word in, keeping the original's formatting (bold, highlight, link…). */
   const pickChoice = (option: string) => {
     if (!editor || !choices) return
     const { from, to } = choices
-    editor.chain().focus().command(({ tr }) => { tr.insertText(option, from, to); return true })
-      .setTextSelection({ from, to: from + option.length }).run()
+    const original = editor.state.doc.slice(from, to)
+    editor.chain().focus().command(({ tr }) => {
+      tr.insertText(option, from, to)
+      markAiFresh(tr, from, from + option.length, original)
+      tr.setMeta(bubbleKey, 'hide')
+      return true
+    }).setTextSelection(from + option.length).run()
     setChoices(null); setAiMode(false)
   }
+
+  // the toolbar decides whether to show on editor changes, so it must read live flags, not a stale render's
+  const bubbleKey = useRef(new PluginKey('noteBubble')).current
+  const flags = useRef({ linkMode, aiBusy: !!aiBusy, choices: !!choices })
+  flags.current = { linkMode, aiBusy: !!aiBusy, choices: !!choices }
 
   const addComment = () => {
     if (!editor) return
@@ -295,7 +348,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} className="bubble" shouldShow={({ editor: e, state }) => (!state.selection.empty || linkMode || !!aiBusy || !!choices) && e.isEditable}>
+        <BubbleMenu editor={editor} pluginKey={bubbleKey} className="bubble"
+          shouldShow={({ editor: e, state }) => (!state.selection.empty || flags.current.linkMode || flags.current.aiBusy || flags.current.choices) && e.isEditable}>
           {aiBusy ? (
             <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
           ) : choices ? (
@@ -364,8 +418,15 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           ))}
         </ul>
       )}
+      {hoverFresh && editor && (
+        <div className="unlink-pop fresh-pop" style={{ left: hoverFresh.x, top: hoverFresh.y }} onMouseEnter={keepFresh} onMouseLeave={dropFresh}>
+          <button title="Undo this AI change (⌘Z)" onMouseDown={e => e.preventDefault()} onClick={() => { editor.chain().focus().revertAiFresh(hoverFresh.id).run(); setHoverFresh(null) }}>
+            <Undo2 size={13} /><span>Undo</span>
+          </button>
+        </div>
+      )}
       {hoverLink && editor && (
-        <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y - 30 }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
+        <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
           <button onMouseDown={e => e.preventDefault()} onClick={() => { unlinkElement(editor.view, hoverLink.el); setHoverLink(null) }}><Unlink size={13} /><span>Unlink</span></button>
         </div>
       )}

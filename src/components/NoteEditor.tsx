@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { PluginKey } from '@tiptap/pm/state'
 import { Bold, Check, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { AI_TASKS, aiAvailable, parseChoices, runAi, selectionToText, singleWord, textToContent, wordInContext, type AiTask } from '../lib/ai'
+import { AI_TASKS, aiAvailable, parseChoices, runAi, runAiOptions, selectionToText, singleWord, textToContent, wordInContext, type AiTask } from '../lib/ai'
+import { sanitize } from '../lib/html'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -14,7 +16,7 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import { EditorKeys, SwallowTab, Wikilink } from '../lib/wikilink'
 import { WikilinkSuggest, matchTitles, type SuggestItem } from '../lib/wikilinkSuggest'
 import { Comment } from '../lib/comment'
-import { AiFresh, markAiFresh } from '../lib/aiFresh'
+import { AiFresh, aiCompareKey, clearCompare, markAiFresh, showCompare } from '../lib/aiFresh'
 import { Undo2 } from 'lucide-react'
 import { isDailyTitle, prettyDate } from '../lib/links'
 
@@ -106,6 +108,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const [aiBusy, setAiBusy] = useState<AiTask | null>(null)
   // options from a 'choose' task (similar words), waiting for a pick
   const [choices, setChoices] = useState<{ word: string; from: number; to: number; options: string[] } | null>(null)
+  // two AI versions shown side by side in the note until one is picked; the note is untouched meanwhile
+  const [compare, setCompare] = useState<{ task: AiTask; options: string[] } | null>(null)
+  const compareDom = useRef<HTMLElement | null>(null)
+  if (!compareDom.current) { compareDom.current = document.createElement('div'); compareDom.current.className = 'ai-compare-slot'; compareDom.current.contentEditable = 'false' }
+  const cancelCompareRef = useRef<() => void>(() => {})
 
   // [[ picker
   const [suggest, setSuggest] = useState<SuggestState | null>(null)
@@ -156,6 +163,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     editorProps: {
       attributes: { class: 'note', spellcheck: 'true' },
       handleKeyDown: (view, event) => {
+        if (event.key === 'Escape' && aiCompareKey.getState(view.state)) { cancelCompareRef.current(); return true }
         // ⌘K / Ctrl+K: link the selected words
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
           if (!view.state.selection.empty) openLinkField.current()
@@ -261,6 +269,26 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     flags.current.aiBusy = true
     setAiBusy(task)
     try {
+      if (task.mode !== 'choose') {
+        const outs = await runAiOptions(task.id, text)
+        flags.current.aiBusy = false
+        if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
+        if (!outs.length) { toast('The AI returned nothing', 'Try again'); return }
+        // replace-mode options stand in for the selection; add-below options come after its block
+        const $to = editor.state.doc.resolve(to)
+        const at = $to.depth > 0 ? $to.after(1) : to
+        const label = task.heading ? `<p><em>${task.heading}</em></p>` : ''
+        const options = outs.map(o => task.mode === 'replace' ? textToContent(o) : label + textToContent(o, false))
+        editor.chain().command(({ tr }) => {
+          showCompare(tr, { at, from: task.mode === 'replace' ? from : at, to: task.mode === 'replace' ? to : at, dom: compareDom.current! })
+          tr.setMeta(bubbleKey, 'hide')
+          return true
+        }).setTextSelection(to).run()
+        setCompare({ task, options })
+        setAiMode(false)
+        requestAnimationFrame(() => compareDom.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+        return
+      }
       const out = await runAi(task.id, text)
       flags.current.aiBusy = false
       if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
@@ -302,6 +330,24 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       return true
     }).setTextSelection(end).run()
   }
+
+  /** Use option `i`: it goes in where the comparison pointed (following any edits since), highlighted as fresh. */
+  const pickOption = (i: number) => {
+    if (!editor || !compare) return
+    const c = aiCompareKey.getState(editor.state)
+    const html = compare.options[i]
+    setCompare(null)
+    if (!c || html === undefined) return
+    editor.view.dispatch(clearCompare(editor.state.tr))
+    applyFresh(c.from, c.to, html, c.to > c.from ? editor.state.doc.slice(c.from, c.to) : null)
+  }
+  const cancelCompare = () => {
+    if (!editor) return
+    setCompare(null)
+    if (aiCompareKey.getState(editor.state)) editor.view.dispatch(clearCompare(editor.state.tr))
+    editor.commands.focus()
+  }
+  cancelCompareRef.current = cancelCompare
 
   /** Swap the chosen word in, keeping the original's formatting (bold, highlight, link…). */
   const pickChoice = (option: string) => {
@@ -417,6 +463,27 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
             </li>
           ))}
         </ul>
+      )}
+      {compare && compareDom.current && createPortal(
+        <div className="ai-compare" role="group" aria-label={`${compare.task.label}: choose a version`}>
+          <div className="ai-compare-head">
+            <Sparkles size={13} />
+            <span>{compare.task.label} — {compare.options.length > 1 ? 'pick the version you prefer' : 'both versions came out the same'}</span>
+            <button className="ai-compare-cancel" onMouseDown={e => e.preventDefault()} onClick={cancelCompare} title="Keep my text (Esc)"><X size={13} /> Keep original</button>
+          </div>
+          <div className={'ai-compare-options' + (compare.options.length > 1 ? ' two' : '')}>
+            {compare.options.map((html, i) => (
+              <div key={i} className="ai-option">
+                {compare.options.length > 1 && <div className="ai-option-label">Option {i + 1}</div>}
+                <div className="ai-option-body note" dangerouslySetInnerHTML={{ __html: sanitize(html.startsWith('<') ? html : `<p>${html}</p>`) }} />
+                <button className="btn small primary ai-option-use" onMouseDown={e => e.preventDefault()} onClick={() => pickOption(i)}>
+                  <Check size={14} /> Use {compare.options.length > 1 ? `option ${i + 1}` : 'this'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>,
+        compareDom.current,
       )}
       {hoverFresh && editor && (
         <div className="unlink-pop fresh-pop" style={{ left: hoverFresh.x, top: hoverFresh.y }} onMouseEnter={keepFresh} onMouseLeave={dropFresh}>

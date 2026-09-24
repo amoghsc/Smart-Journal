@@ -159,9 +159,19 @@ Deno.serve(async (req: Request) => {
     if (text.length > MAX_CHARS) throw new HttpError(413, 'That selection is too long — pick a shorter passage')
 
     const main = Deno.env.get('GEMINI_MODEL') || 'gemini-3.6-flash'
-    const fallbacks = (Deno.env.get('GEMINI_FALLBACKS') || 'gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(s => s.trim()).filter(Boolean)
-    const result = await gemini(geminiKey, [main, ...fallbacks.filter(m => m !== main)], system, text, TEMPERATURE[body.task] ?? 0.4)
-    return json(200, result)
+    const models = [main, ...(Deno.env.get('GEMINI_FALLBACKS') || 'gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(s => s.trim()).filter(m => m && m !== main)]
+    const temperature = TEMPERATURE[body.task] ?? 0.4
+
+    // Two versions to choose from: run twice in parallel, the second a little more adventurous.
+    // Duplicates are dropped; if one call fails the other still counts.
+    const variants = body.variants === 2 && !WORD_TASKS.has(body.task) ? 2 : 1
+    const temps = variants === 2 ? [temperature, Math.min(1.3, temperature + 0.35)] : [temperature]
+    const settled = await Promise.allSettled(temps.map(t => gemini(geminiKey, models, system, text, t)))
+    const ok = settled.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
+    if (!ok.length) throw (settled[0] as PromiseRejectedResult).reason
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase()
+    const texts = ok.map(r => r.text).filter((t, i, all) => all.findIndex(o => norm(o) === norm(t)) === i)
+    return json(200, { text: texts[0], texts, model: ok[0].model })
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500
     console.error('nt-ai', status, (e as Error).message)

@@ -42,6 +42,48 @@ export function markAiFresh(tr: Transaction, from: number, to: number, original:
   return tr.setMeta(aiFreshKey, { add: { id: crypto.randomUUID(), from, to, original, at: Date.now() } } satisfies Meta)
 }
 
+// ---- choosing between AI versions ------------------------------------------------------------------
+// While you compare, the note itself is untouched: the options live in a widget between paragraphs and the
+// text they would replace is only outlined. Positions follow edits made meanwhile.
+
+export interface CompareState {
+  /** Where the options panel sits: between top-level blocks. */
+  at: number
+  /** The text the chosen option replaces (from === to when it will be added instead). */
+  from: number
+  to: number
+  dom: HTMLElement
+}
+type CompareMeta = { show: CompareState } | { clear: true }
+export const aiCompareKey = new PluginKey<CompareState | null>('aiCompare')
+
+export function showCompare(tr: Transaction, state: CompareState) { return tr.setMeta(aiCompareKey, { show: state } satisfies CompareMeta).setMeta('addToHistory', false) }
+export function clearCompare(tr: Transaction) { return tr.setMeta(aiCompareKey, { clear: true } satisfies CompareMeta).setMeta('addToHistory', false) }
+
+const comparePlugin = () => new Plugin<CompareState | null>({
+  key: aiCompareKey,
+  state: {
+    init: () => null,
+    apply(tr, cur) {
+      const meta = tr.getMeta(aiCompareKey) as CompareMeta | undefined
+      if (meta && 'show' in meta) return meta.show
+      if (meta && 'clear' in meta) return null
+      if (!cur || !tr.docChanged) return cur
+      const from = tr.mapping.map(cur.from, 1), to = Math.max(from, tr.mapping.map(cur.to, -1))
+      return { ...cur, at: tr.mapping.map(cur.at, 1), from, to }
+    },
+  },
+  props: {
+    decorations(state) {
+      const c = aiCompareKey.getState(state)
+      if (!c) return null
+      const decos = [Decoration.widget(c.at, c.dom, { side: 1, key: 'ai-compare', stopEvent: () => true, ignoreSelection: true })]
+      if (c.to > c.from) decos.push(Decoration.inline(c.from, c.to, { class: 'ai-source' }))
+      return DecorationSet.create(state.doc, decos)
+    },
+  },
+})
+
 export const AiFresh = Extension.create<object, { timer: ReturnType<typeof setInterval> | null }>({
   name: 'aiFresh',
 
@@ -62,7 +104,7 @@ export const AiFresh = Extension.create<object, { timer: ReturnType<typeof setIn
   },
 
   addProseMirrorPlugins() {
-    return [new Plugin<FreshEntry[]>({
+    return [comparePlugin(), new Plugin<FreshEntry[]>({
       key: aiFreshKey,
       state: {
         init: () => [],

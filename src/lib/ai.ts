@@ -63,6 +63,14 @@ export function aiAvailable(): Promise<boolean> {
   return configured
 }
 
+/** Two versions to choose between (one if both came out the same). */
+export async function runAiOptions(task: AiTaskId, text: string): Promise<string[]> {
+  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, variants: 2 } })
+  if (error) throw await readError(error)
+  const texts = (data?.texts as string[] | undefined) ?? (data?.text ? [data.text as string] : [])
+  return texts.filter(t => t && t.trim())
+}
+
 export async function runAi(task: AiTaskId, text: string): Promise<string> {
   const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text } })
   if (error) throw await readError(error)

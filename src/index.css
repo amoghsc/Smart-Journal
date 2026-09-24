@@ -442,3 +442,21 @@ p.small { margin: 0; line-height: 1.45; }
 /* it marks what changed, so it fades even with Animations off */
 :root[data-anim="off"] .ai-fresh { animation: ai-fresh-fade 60s linear forwards !important; }
 .fresh-pop button { color: #8b5cf6; }
+
+/* choosing between two AI versions: a panel between paragraphs, clearly apart from the note's own text */
+.ai-compare-slot { display: block; margin: 10px 0 14px; }
+.ai-compare { border: 1px solid rgba(139, 92, 246, 0.45); background: rgba(139, 92, 246, 0.06); border-radius: 10px; padding: 10px 12px 12px; font-size: 14px; animation: fade-in .2s ease; }
+.ai-compare-head { display: flex; align-items: center; gap: 7px; color: #8b5cf6; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+.ai-compare-head span { flex: 1; min-width: 0; }
+.ai-compare-cancel { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--muted); padding: 3px 8px; border-radius: 6px; }
+.ai-compare-cancel:hover { background: var(--bg3); color: var(--fg); }
+.ai-compare-options { display: grid; gap: 10px; }
+.ai-compare-options.two { grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .ai-compare-options.two { grid-template-columns: 1fr; } }
+.ai-option { display: flex; flex-direction: column; gap: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.ai-option:hover { border-color: rgba(139, 92, 246, 0.6); }
+.ai-option-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.ai-option-body.note { padding: 0; flex: 1; font-size: 14.5px; line-height: 1.55; }
+.ai-option-use { align-self: flex-start; background: #8b5cf6 !important; }
+/* the text an option would replace */
+.ai-source { background: rgba(139, 92, 246, 0.10); text-decoration: underline dashed rgba(139, 92, 246, 0.7); text-underline-offset: 4px; }

@@ -14,7 +14,9 @@ const MAX_CHARS = 40_000
 // Shared by every task. The text arrives with light markup that must survive the rewrite.
 const COMMON =
   ' The passage is from the user\'s own notes. ' +
-  'The passage may contain markup: lines starting with "- " are bullets and "1. " numbered items (keep them as lists when the result is a list), ' +
+  'Unless the task asks for a particular tone or style, use simple, clear language and a neutral tone. ' +
+  'The passage may contain markup: lines starting with "- " are bullets and "1. " numbered items, indented two spaces per nesting level ' +
+  '(keep them as lists, with the same nesting, when the result is a list), ' +
   '[[Title]] is a link to another note and [words](https://…) a link to a website — keep every such link exactly as written, including the brackets. ' +
   'Output only the resulting text: plain text with blank lines between paragraphs, no headings, no bold or italics, no quotation marks around it, ' +
   'and no preamble or comment such as "Here is…".'

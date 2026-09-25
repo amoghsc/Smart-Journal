@@ -1,11 +1,14 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
-import { PluginKey } from '@tiptap/pm/state'
+import { PluginKey, Selection } from '@tiptap/pm/state'
+import type { Fragment, Slice } from '@tiptap/pm/model'
 import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { AI_TASKS, LANGS, aiAvailable, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, textToContent, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
+import { AI_TASKS, LANGS, aiAvailable, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
+import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
+import { AI_INSERT, AiText } from '../lib/aiText'
 import { sanitize } from '../lib/html'
 import { aiTwoVersions } from '../lib/settings'
 import { toast } from '../lib/toast'
@@ -17,7 +20,7 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import { EditorKeys, SwallowTab, Wikilink } from '../lib/wikilink'
 import { WikilinkSuggest, matchTitles, type SuggestItem } from '../lib/wikilinkSuggest'
 import { Comment } from '../lib/comment'
-import { AiFresh, aiCompareKey, clearCompare, markAiFresh, showCompare } from '../lib/aiFresh'
+import { AI_FRESH_MS, AiFresh, aiCompareKey, aiFreshKey, clearCompare, markAiFresh, showCompare } from '../lib/aiFresh'
 import { Undo2 } from 'lucide-react'
 import { isDailyTitle, prettyDate } from '../lib/links'
 
@@ -89,11 +92,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // hover "unlink" affordance (pointer devices) and long-press unlink (touch)
   const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number } | null>(null)
-  // hovering text the AI just wrote offers Undo
-  const [hoverFresh, setHoverFresh] = useState<{ id: string; x: number; y: number } | null>(null)
-  const freshTimer = useRef<number | null>(null)
-  const keepFresh = () => { if (freshTimer.current) { clearTimeout(freshTimer.current); freshTimer.current = null } }
-  const dropFresh = () => { keepFresh(); freshTimer.current = window.setTimeout(() => setHoverFresh(null), 300) }
+  // text the AI just wrote has an Undo badge pinned to its top-right corner while it is highlighted
+  const [undoBadges, setUndoBadges] = useState<{ id: string; x: number; y: number; age: number }[]>([])
+  const badgeLayer = useRef<HTMLElement | null>(null)
   const hideTimer = useRef<number | null>(null)
   const pressTimer = useRef<number | null>(null)
   const clearHide = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null } }
@@ -108,16 +109,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // AI tools (✨): a row in the selection menu; the request runs on the server
   const [aiMode, setAiMode] = useState(false)
-  const [translateOpen, setTranslateOpen] = useState(false)
+  // Translate › opens a small menu to its right; `translateAt` is where
+  const [translateAt, setTranslateAt] = useState<{ left: number; top: number } | null>(null)
+  const translateTimer = useRef<number | null>(null)
   const [aiBusy, setAiBusy] = useState<AiTask | null>(null)
   // options from a 'choose' task (similar words), waiting for a pick
   const [choices, setChoices] = useState<{ word: string; from: number; to: number; options: string[] } | null>(null)
   // AI versions shown in the note, one under the other, until one is picked; the note is untouched meanwhile.
   // `result` names them for the hover label; `picked` is set while the chosen one settles in.
-  const [compare, setCompare] = useState<{ task: AiTask; result: string; options: string[]; picked?: number } | null>(null)
+  // While they show, the note is locked: nothing else can be selected, edited or run until you pick one or undo.
+  const [compare, setCompare] = useState<{ task: AiTask; result: string; options: (string | Fragment)[]; previews: string[]; picked?: number } | null>(null)
   const compareDom = useRef<HTMLElement | null>(null)
   if (!compareDom.current) { compareDom.current = document.createElement('div'); compareDom.current.className = 'ai-compare-slot'; compareDom.current.contentEditable = 'false' }
-  const cancelCompareRef = useRef<() => void>(() => {})
 
   // [[ picker
   const [suggest, setSuggest] = useState<SuggestState | null>(null)
@@ -160,6 +163,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       }),
       Comment,
       AiFresh,
+      AiText,
       EditorKeys,
       SwallowTab,
     ],
@@ -168,7 +172,6 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     editorProps: {
       attributes: { class: 'note', spellcheck: 'true' },
       handleKeyDown: (view, event) => {
-        if (event.key === 'Escape' && aiCompareKey.getState(view.state)) { cancelCompareRef.current(); return true }
         // ⌘K / Ctrl+K: link the selected words
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
           if (!view.state.selection.empty) openLinkField.current()
@@ -192,19 +195,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           const target = e.target as HTMLElement
           const el = target.closest<HTMLElement>('a.wikilink')
           if (el) { clearHide(); const r = el.getBoundingClientRect(); setHoverLink({ el, x: r.left, y: popTop(r) }) }
-          const fresh = target.closest<HTMLElement>('[data-ai-fresh]')
-          if (fresh) {
-            keepFresh()
-            // the line under the pointer, not the whole (possibly multi-line) highlight
-            const line = [...fresh.getClientRects()].find(r => e.clientY >= r.top && e.clientY <= r.bottom) ?? fresh.getBoundingClientRect()
-            setHoverFresh({ id: fresh.dataset.aiFresh!, x: Math.max(4, e.clientX - 30), y: popTop(line) })
-          }
           return false
         },
         mouseout: (_view, e) => {
           const target = e.target as HTMLElement
           if (target.closest('a.wikilink')) scheduleHide()
-          if (target.closest('[data-ai-fresh]')) dropFresh()
           return false
         },
         touchstart: (view, e) => {
@@ -226,11 +221,59 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   })
 
   useEffect(() => { ready.current?.(editor); return () => ready.current?.(null) }, [editor])
-  useEffect(() => { if (!aiMode) setTranslateOpen(false) }, [aiMode])
+  useEffect(() => { if (!aiMode) setTranslateAt(null) }, [aiMode])
+
+  // choosing between versions locks the note (other notes stay editable); focus goes to the first version
+  const comparing = !!compare
+  useEffect(() => {
+    if (!editor) return
+    editor.setEditable(!comparing, false)
+    editor.view.dom.classList.toggle('ai-locked', comparing)
+    if (comparing) requestAnimationFrame(() => {
+      compareDom.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      compareDom.current?.querySelector<HTMLElement>('.ai-option')?.focus({ preventScroll: true })
+    })
+  }, [comparing, editor])
+
+  // Undo badges: at the top-right corner of each fresh highlight, placed in a layer that scrolls with the note
+  useEffect(() => {
+    if (!editor) return
+    const wrap = editor.view.dom.parentElement
+    if (!wrap) return
+    wrap.style.position = 'relative'
+    const layer = document.createElement('div')
+    layer.className = 'ai-undo-layer'
+    wrap.appendChild(layer)
+    badgeLayer.current = layer
+    let frame = 0
+    const place = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        if (editor.isDestroyed) return
+        const entries = aiFreshKey.getState(editor.state) ?? []
+        const base = wrap.getBoundingClientRect()
+        // in the right margin, just past the text column, so it never sits over words
+        const dom = editor.view.dom, box = dom.getBoundingClientRect()
+        const margin = Math.min(box.right - parseFloat(getComputedStyle(dom).paddingRight) + 6, box.right - 24) - base.left
+        const now = Date.now()
+        setUndoBadges(entries.flatMap(e => {
+          const rects = [...dom.querySelectorAll(`[data-ai-fresh="${e.id}"]`)].flatMap(el => [...el.getClientRects()])
+          if (!rects.length) return []
+          const first = rects.reduce((a, r) => (r.top < a.top ? r : a))
+          return [{ id: e.id, x: margin, y: first.top + first.height / 2 - base.top, age: now - e.at }]
+        }))
+      })
+    }
+    editor.on('transaction', place)
+    const ro = new ResizeObserver(place)
+    ro.observe(editor.view.dom)
+    return () => { editor.off('transaction', place); ro.disconnect(); cancelAnimationFrame(frame); layer.remove(); badgeLayer.current = null }
+  }, [editor])
 
   // content changed elsewhere (another device / compile) while this editor is idle
   useEffect(() => {
-    if (editor && !editor.isFocused && editor.getHTML() !== html) editor.commands.setContent(html, { emitUpdate: false })
+    // not while versions are showing: their positions would be lost
+    if (editor && !editor.isFocused && !aiCompareKey.getState(editor.state) && editor.getHTML() !== html) editor.commands.setContent(html, { emitUpdate: false })
   }, [html, editor])
 
   const active = useEditorState({
@@ -272,7 +315,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const { from, to } = editor.state.selection
     const word = singleWord(editor.state.doc, from, to)
     if (task.wordOnly && !word) return
-    const text = task.wordOnly ? wordInContext(editor.state.doc, from, word!) : selectionToText(editor.state.doc, from, to)
+    // where the result will go, at the selection's level (see lib/aiPlace)
+    const plan = planAi(editor.state.doc, from, to, task.mode === 'after' ? 'after' : 'replace')
+    const text = task.wordOnly ? wordInContext(editor.state.doc, from, word!) : plan.text
     if (!text.trim()) return
     const docBefore = editor.state.doc
     const opts = { lang: detectLanguage(text), target }
@@ -285,19 +330,17 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         flags.current.aiBusy = false
         if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
         if (!outs.length) { toast('The AI returned nothing', 'Try again'); return }
-        // replace-mode options stand in for the selection; add-below options come after its block
-        const $to = editor.state.doc.resolve(to)
-        const at = $to.depth > 0 ? $to.after(1) : to
-        const label = task.heading ? `<p><em>${task.heading}</em></p>` : ''
-        const options = outs.map(o => task.mode === 'replace' ? textToContent(o) : label + textToContent(o, false))
+        const options = outs.map(o => resultContent(editor.schema, plan, o, task.heading))
+        // only one distinct version: nothing to choose, so it goes straight in
+        if (options.length === 1) { applyFresh(plan.from, plan.to, options[0], plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null); setAiMode(false); return }
         editor.chain().command(({ tr }) => {
-          showCompare(tr, { at, from: task.mode === 'replace' ? from : at, to: task.mode === 'replace' ? to : at, dom: compareDom.current! })
+          showCompare(tr, { at: plan.at, from: plan.from, to: plan.to, dom: compareDom.current! })
           tr.setMeta(bubbleKey, 'hide')
+          tr.setSelection(Selection.near(tr.doc.resolve(to), -1))
           return true
-        }).setTextSelection(to).run()
-        setCompare({ task, result, options })
+        }).run()
+        setCompare({ task, result, options, previews: options.map(o => previewHtml(editor.schema, o)) })
         setAiMode(false)
-        requestAnimationFrame(() => compareDom.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
         return
       }
       const out = await runAi(task.id, text, opts)
@@ -309,15 +352,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         setChoices({ word: word ?? '', from, to, options })
         return
       }
-      if (task.mode === 'replace') {
-        applyFresh(from, to, textToContent(out), editor.state.doc.slice(from, to))
-      } else {
-        // after the top-level block the selection ends in (after the whole list, if it's in one)
-        const $to = editor.state.doc.resolve(to)
-        const at = $to.depth > 0 ? $to.after(1) : to
-        const label = task.heading ? `<p><em>${task.heading}</em></p>` : ''
-        applyFresh(at, at, label + textToContent(out, false), null)
-      }
+      applyFresh(plan.from, plan.to, resultContent(editor.schema, plan, out, task.heading), plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null)
       setAiMode(false)
     } catch (e) {
       toast(`Couldn’t ${task.label.toLowerCase()}`, (e as Error).message)
@@ -327,29 +362,36 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   }
 
   /**
-   * Put AI output at [from, to] (a range to replace, or a single point to insert at), highlight it as fresh,
-   * and leave the cursor after it — a collapsed selection, so the toolbar closes.
+   * Put AI output at [from, to] (a range to replace, or a single point to insert at): HTML, or list items built
+   * for that spot. It is marked as AI-written (saved with the note until you edit it) and highlighted as fresh,
+   * and the cursor goes after it — a collapsed selection, so the toolbar closes.
    */
-  const applyFresh = (from: number, to: number, content: string, original: ReturnType<NonNullable<typeof editor>['state']['doc']['slice']> | null) => {
+  const applyFresh = (from: number, to: number, content: string | Fragment, original: Slice | null) => {
     if (!editor) return
-    let end = to
-    editor.chain().focus().insertContentAt({ from, to }, content, { updateSelection: false }).command(({ tr }) => {
-      const start = tr.mapping.map(from, -1)
-      end = tr.mapping.map(to, 1)
+    const id = crypto.randomUUID()
+    const chain = editor.chain().focus()
+    const inserted = typeof content === 'string'
+      ? chain.insertContentAt({ from, to }, content, { updateSelection: false })
+      : chain.command(({ tr }) => { tr.replaceWith(from, to, content); return true })
+    inserted.command(({ tr }) => {
+      const start = tr.mapping.map(from, -1), end = tr.mapping.map(to, 1)
+      tr.addMark(start, end, editor.schema.marks.aiText.create({ id }))
+      tr.setMeta(AI_INSERT, true)
       markAiFresh(tr, start, end, original)
       tr.setMeta(bubbleKey, 'hide')
+      tr.setSelection(Selection.near(tr.doc.resolve(end), -1))
       return true
-    }).setTextSelection(end).run()
+    }).run()
   }
 
   /**
-   * Use option `i`: the others fade and fold away, then it goes in where the comparison pointed (following any
-   * edits since), highlighted as fresh — so it reads as settling into the note.
+   * Use option `i`: the others fade and fold away, then it goes in where the comparison pointed, highlighted as
+   * fresh — so it reads as settling into the note. The note unlocks.
    */
   const pickOption = (i: number) => {
     if (!editor || !compare || compare.picked !== undefined) return
-    const html = compare.options[i]
-    if (html === undefined) return
+    const content = compare.options[i]
+    if (content === undefined) return
     const animate = document.documentElement.dataset.anim !== 'off'
     // fold the others from their real height, so the text below slides up rather than jumps
     compareDom.current?.querySelectorAll<HTMLElement>('.ai-option').forEach((el, j) => {
@@ -363,17 +405,19 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       setCompare(null)
       const c = aiCompareKey.getState(editor.state)
       if (!c) return
+      editor.setEditable(true, false)
       editor.view.dispatch(clearCompare(editor.state.tr))
-      applyFresh(c.from, c.to, html, c.to > c.from ? editor.state.doc.slice(c.from, c.to) : null)
+      applyFresh(c.from, c.to, content, c.to > c.from ? editor.state.doc.slice(c.from, c.to) : null)
     }, animate ? OPTION_OUT_MS : 0)
   }
+  /** Undo the whole AI operation: drop the versions, keep your text, unlock the note. */
   const cancelCompare = () => {
     if (!editor) return
     setCompare(null)
+    editor.setEditable(true, false)
     if (aiCompareKey.getState(editor.state)) editor.view.dispatch(clearCompare(editor.state.tr))
     editor.commands.focus()
   }
-  cancelCompareRef.current = cancelCompare
 
   /** Swap the chosen word in, keeping the original's formatting (bold, highlight, link…). */
   const pickChoice = (option: string) => {
@@ -402,6 +446,14 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   }
 
   const keep = (e: React.MouseEvent) => e.preventDefault()   // buttons must not steal the editor's selection
+  const stayTranslate = () => { if (translateTimer.current) { clearTimeout(translateTimer.current); translateTimer.current = null } }
+  const closeTranslateSoon = () => { stayTranslate(); translateTimer.current = window.setTimeout(() => setTranslateAt(null), 250) }
+  /** Show the language menu beside the Translate item (on its left when there's no room on the right). */
+  const openTranslate = (item: HTMLElement) => {
+    stayTranslate()
+    const r = item.getBoundingClientRect(), width = 130
+    setTranslateAt({ left: r.right + 4 + width < window.innerWidth ? r.right + 4 : Math.max(4, r.left - width - 4), top: r.top - 4 })
+  }
   const label = (t: string) => isDailyTitle(t) ? prettyDate(t, true) : t
   const aiGroups = AI_TASKS.filter(t => !t.wordOnly || active?.word).reduce<[number, AiTask[]][]>((acc, t) => {
     const g = acc.find(([n]) => n === t.group)
@@ -409,7 +461,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     return acc
   }, [])
   // translate offers the two languages the selection isn't in
-  const targets = translateOpen && editor
+  const targets = translateAt && editor
     ? translateTargets(detectLanguage(selectionToText(editor.state.doc, editor.state.selection.from, editor.state.selection.to)))
     : []
 
@@ -447,16 +499,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               {aiGroups.map(([group, tasks]) => (
                 <div key={group} className="ai-group">
                   {tasks.map(t => t.id === 'translate' ? (
-                    <Fragment key={t.id}>
-                      <button role="menuitem" aria-haspopup="menu" aria-expanded={translateOpen} className={'ai-item' + (translateOpen ? ' open' : '')}
-                        onMouseDown={keep} onClick={() => setTranslateOpen(o => !o)}>
-                        {t.label}<ChevronRight size={14} className="ai-chev" />
-                      </button>
-                      {targets.map(l => (
-                        <button key={l} role="menuitem" className="ai-item ai-sub" lang={l} onMouseDown={keep} onClick={() => runTask(t, l)}
-                          title="Replaces the selected text (⌘Z to undo)">{LANGS[l]}</button>
-                      ))}
-                    </Fragment>
+                    <button key={t.id} role="menuitem" aria-haspopup="menu" aria-expanded={!!translateAt} className={'ai-item' + (translateAt ? ' open' : '')}
+                      onMouseDown={keep} onMouseEnter={e => openTranslate(e.currentTarget)} onMouseLeave={closeTranslateSoon}
+                      onClick={e => (translateAt ? setTranslateAt(null) : openTranslate(e.currentTarget))}>
+                      {t.label}<ChevronRight size={14} className="ai-chev" />
+                    </button>
                   ) : (
                     <button key={t.id} role="menuitem" className="ai-item" onMouseDown={keep} onClick={() => runTask(t)}
                       title={t.mode === 'after' ? 'Adds the result below your text' : 'Replaces the selected text (⌘Z to undo)'}>
@@ -505,9 +552,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         </ul>
       )}
       {compare && compareDom.current && createPortal(
-        <div className={'ai-compare' + (compare.picked !== undefined ? ' picking' : '')} role="group" aria-label={`AI: ${compare.result} — click a version to use it`}>
-          {compare.options.map((html, i) => {
-            const tip = `AI: ${compare.result}${compare.options.length > 1 ? ` · Option ${i + 1}` : ''}`
+        <div className={'ai-compare' + (compare.picked !== undefined ? ' picking' : '')} role="group" aria-label={`AI: ${compare.result} — pick a version, or undo`}>
+          {compare.previews.map((html, i) => {
+            const tip = `AI: ${compare.result} · Option ${i + 1}`
             return (
               <div key={i} role="button" tabIndex={0} aria-label={`Use ${tip}`}
                 className={'ai-option' + (compare.picked === i ? ' chosen' : compare.picked !== undefined ? ' gone' : '')}
@@ -515,22 +562,40 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickOption(i) }
                   if (e.key === 'Escape') { e.preventDefault(); cancelCompare() }
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    const all = [...(compareDom.current?.querySelectorAll<HTMLElement>('.ai-option') ?? [])]
+                    all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus()
+                  }
                 }}>
                 <span className="ai-option-tip" aria-hidden>{tip}</span>
-                <div className="ai-option-body note" dangerouslySetInnerHTML={{ __html: sanitize(html.startsWith('<') ? html : `<p>${html}</p>`) }} />
+                <div className="ai-option-body note" dangerouslySetInnerHTML={{ __html: sanitize(html) }} />
               </div>
             )
           })}
-          <button className="ai-compare-cancel" onMouseDown={e => e.preventDefault()} onClick={cancelCompare} title="Keep my text (Esc)" aria-label="Keep my text"><X size={14} /></button>
+          <button className="ai-compare-cancel" onMouseDown={e => e.preventDefault()} onClick={cancelCompare} title="Undo — keep my text (Esc)" aria-label="Undo, keep my text"><Undo2 size={14} /></button>
         </div>,
         compareDom.current,
       )}
-      {hoverFresh && editor && (
-        <div className="unlink-pop fresh-pop" style={{ left: hoverFresh.x, top: hoverFresh.y }} onMouseEnter={keepFresh} onMouseLeave={dropFresh}>
-          <button title="Undo this AI change (⌘Z)" onMouseDown={e => e.preventDefault()} onClick={() => { editor.chain().focus().revertAiFresh(hoverFresh.id).run(); setHoverFresh(null) }}>
-            <Undo2 size={13} /><span>Undo</span>
+      {badgeLayer.current && editor && undoBadges.length > 0 && createPortal(
+        undoBadges.map(b => (
+          <button key={b.id} className="ai-undo" style={{ left: b.x, top: b.y, animationDelay: `-${Math.min(AI_FRESH_MS, b.age) / 1000}s` }}
+            title="Undo this AI change (⌘Z)" aria-label="Undo this AI change" onMouseDown={e => e.preventDefault()}
+            onClick={() => editor.chain().focus().revertAiFresh(b.id).run()}>
+            <Undo2 size={12} />
           </button>
-        </div>
+        )),
+        badgeLayer.current,
+      )}
+      {translateAt && aiMode && editor && createPortal(
+        <div className="bubble ai-flyout" role="menu" aria-label="Translate to" style={{ left: translateAt.left, top: translateAt.top }}
+          onMouseEnter={stayTranslate} onMouseLeave={closeTranslateSoon}>
+          {targets.map(l => (
+            <button key={l} role="menuitem" className="ai-item" lang={l} onMouseDown={keep} onClick={() => { setTranslateAt(null); runTask(AI_TASKS.find(t => t.id === 'translate')!, l) }}
+              title="Replaces the selected text (⌘Z to undo)">{LANGS[l]}</button>
+          ))}
+        </div>,
+        document.body,
       )}
       {hoverLink && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>

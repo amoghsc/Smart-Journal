@@ -416,9 +416,10 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-group { display: flex; flex-direction: column; }
 .bubble { max-width: calc(100vw - 16px); }
 .ai-group + .ai-group { border-top: 1px solid var(--line); margin-top: 3px; padding-top: 3px; }
-.bubble .ai-item .ai-chev { color: var(--muted); transition: transform .15s ease; }
-.bubble .ai-item.open .ai-chev { transform: rotate(90deg); }
-.bubble .ai-item.ai-sub { padding-left: 22px !important; }
+.bubble .ai-item .ai-chev { color: var(--muted); margin-right: -3px; }
+.bubble .ai-item.open { background: var(--bg3); }
+/* Translate ›: the languages open in a small menu beside it */
+.ai-flyout { position: fixed; z-index: 60; flex-direction: column; min-width: 120px; padding: 4px; animation: fade-in .12s ease; }
 .bubble .ai-item { width: 100% !important; height: auto !important; min-height: 28px; justify-content: space-between !important; gap: 10px; padding: 4px 8px !important; font-size: 13.5px; color: var(--fg) !important; text-align: left; }
 .bubble .ai-item:hover { background: var(--bg3); }
 .ai-note { font-size: 11px; color: var(--muted); font-weight: 400; }
@@ -476,5 +477,26 @@ p.small { margin: 0; line-height: 1.45; }
   :root:not([data-theme="light"]) .ai-option { background: rgba(167, 139, 250, 0.11); }
   :root:not([data-theme="light"]) .ai-option:hover, :root:not([data-theme="light"]) .ai-option.chosen { background: rgba(167, 139, 250, 0.2); }
 }
+/* while versions are showing the note is locked: only the versions (and their Undo) respond */
+.note.ai-locked { cursor: default; user-select: none; -webkit-user-select: none; }
+.note.ai-locked *:not(.ai-compare-slot, .ai-compare-slot *) { pointer-events: none; }
+
+/* Undo badge: in the right margin beside the first line of text the AI just wrote; it fades with the highlight */
+.ai-undo-layer { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; z-index: 5; }
+.ai-undo { position: absolute; transform: translateY(-50%); width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px; background: var(--bg); color: #8b5cf6; border: 1px solid rgba(139, 92, 246, 0.35); box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  animation: ai-undo-life 20s linear forwards; }
+.ai-undo:hover { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+@keyframes ai-undo-life { 0%, 90% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+/* AI-written text you haven't edited: a thin purple rule in the margin, ✦ where a run starts; partly-AI lines get ✦ and a dotted underline */
+.note .ai-block, .note .ai-part { position: relative; }
+.note .ai-block::before { content: ''; position: absolute; left: -10px; top: -0.2em; bottom: -0.2em; width: 2px; border-radius: 1px; background: rgba(139, 92, 246, 0.35); }
+.note .ai-first::after { content: '✦'; position: absolute; left: -24px; top: 0.3em; font-size: 10px; line-height: 1; color: rgba(139, 92, 246, 0.6); pointer-events: none; }
+.note li > .ai-block::before { left: calc(-1.25em - 6px); }
+.note li > .ai-first::after { left: calc(-1.25em - 20px); }
+.note .ai-part .ai-text { text-decoration: underline dotted rgba(139, 92, 246, 0.5); text-underline-offset: 4px; }
+.ai-option-body .ai-block::before, .ai-option-body .ai-first::after { display: none; }
+
 /* the text an option would replace */
 .ai-source { background: rgba(139, 92, 246, 0.10); text-decoration: underline dashed rgba(139, 92, 246, 0.7); text-underline-offset: 4px; }

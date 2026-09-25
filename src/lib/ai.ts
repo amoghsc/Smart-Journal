@@ -120,11 +120,12 @@ export async function runAi(task: AiTaskId, text: string, opts: AiOpts = {}): Pr
 
 // ---- selection ⇄ text -----------------------------------------------------------------------------
 // The model sees light markup so structure survives a rewrite:
-//   "- item" bullets, "1. item" numbered items, [[Note title]] note links, [words](https://…) web links.
+//   "- item" bullets, "1. item" numbered items, indented two spaces per nesting level (a list item's second
+//   paragraph is indented without a marker), [[Note title]] note links, [words](https://…) web links.
 
 /** The part of the document between `from` and `to` as marked-up text. */
 export function selectionToText(doc: PMNode, from: number, to: number): string {
-  const blocks: { text: string; list: 'bullet' | 'ordered' | null }[] = []
+  const blocks: { text: string; list: 'bullet' | 'ordered' | null; level: number; more: boolean }[] = []
   doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isTextblock) return true
     let text = ''
@@ -142,21 +143,28 @@ export function selectionToText(doc: PMNode, from: number, to: number): string {
       }
     })
     const $pos = doc.resolve(pos)
-    let list: 'bullet' | 'ordered' | null = null
+    let list: 'bullet' | 'ordered' | null = null, level = 0
     for (let d = $pos.depth; d > 0; d--) {
       const n = $pos.node(d).type.name
-      if (n === 'bulletList') { list = 'bullet'; break }
-      if (n === 'orderedList') { list = 'ordered'; break }
+      if (n === 'bulletList' || n === 'orderedList') { list ??= n === 'bulletList' ? 'bullet' : 'ordered'; level++ }
     }
-    if (text.trim()) blocks.push({ text: text.trim(), list })
+    // a second paragraph inside a list item continues that item
+    const more = !!list && $pos.parent.type.name === 'listItem' && $pos.index() > 0
+    if (text.trim()) blocks.push({ text: text.trim(), list, level, more })
     return false
   })
-  let n = 0
+  // nesting is relative to the shallowest list in the selection
+  const base = Math.min(...blocks.filter(b => b.list).map(b => b.level), Infinity)
+  const counters: number[] = []
   return blocks.map((b, i) => {
     const prev = blocks[i - 1]
-    if (b.list !== 'ordered') n = 0
-    const line = b.list === 'bullet' ? `- ${b.text}` : b.list === 'ordered' ? `${++n}. ${b.text}` : b.text
-    return (i === 0 ? '' : prev?.list && prev.list === b.list ? '\n' : '\n\n') + line
+    const sep = i === 0 ? '' : prev?.list && b.list ? '\n' : '\n\n'
+    if (!b.list) return sep + b.text
+    const depth = b.level - base, pad = '  '.repeat(depth)
+    if (b.more) return sep + pad + '  ' + b.text
+    counters.length = depth + 1
+    counters[depth] = b.list === 'ordered' ? (counters[depth] ?? 0) + 1 : 0
+    return sep + pad + (b.list === 'bullet' ? '- ' : `${counters[depth]}. `) + b.text
   }).join('')
 }
 
@@ -169,36 +177,53 @@ function inline(s: string): string {
     .replace(/\[([^\][]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, (_, text: string, href: string) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`)
 }
 
+interface Item { indent: number; kind: 'ul' | 'ol'; text: string; more: string[] }
+
+/** List lines → nested lists. Indent widths are ranked, so 2- and 4-space nesting both work. */
+function listHtml(items: Item[]): string {
+  const widths = [...new Set(items.map(it => it.indent))].sort((x, y) => x - y)
+  const level = (it: Item) => widths.indexOf(it.indent)
+  const item = (it: Item) => `<p>${inline(it.text)}</p>` + it.more.map(m => `<p>${inline(m)}</p>`).join('')
+  let i = 0
+  const list = (lvl: number): string => {
+    const kind = items[i].kind
+    let html = ''
+    while (i < items.length && level(items[i]) >= lvl && (level(items[i]) > lvl || items[i].kind === kind)) {
+      const it = items[i++]
+      let inner = item(it)
+      while (i < items.length && level(items[i]) > lvl) inner += list(level(items[i]))
+      html += `<li>${inner}</li>`
+    }
+    return `<${kind}>${html}</${kind}>`
+  }
+  let out = ''
+  while (i < items.length) out += list(level(items[i]))
+  return out
+}
+
 /**
- * AI output → editor HTML. Blank lines separate paragraphs; "- " and "1. " lines become lists.
+ * AI output → editor HTML. Blank lines separate paragraphs; "- " and "1. " lines become lists, nested by indent.
  * A single plain paragraph comes back as inline HTML (when `allowInline`) so it can replace words mid-sentence.
  */
 export function textToContent(raw: string, allowInline = true): string {
-  const text = raw.replace(/^#+\s*/gm, '').trim()
-  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean)
-  const isBullet = (l: string) => /^[-*•]\s+/.test(l)
-  const isNumbered = (l: string) => /^\d+[.)]\s+/.test(l)
-  if (allowInline && blocks.length === 1 && !blocks[0].split('\n').some(l => isBullet(l.trim()) || isNumbered(l.trim()))) {
-    return inline(blocks[0].replace(/\s*\n\s*/g, ' '))
+  const lines = raw.replace(/^#+\s*/gm, '').replace(/\t/g, '    ').replace(/\s+$/, '').replace(/^\s*\n/, '').split('\n')
+  let out = '', para: string[] = [], items: Item[] = [], paras = 0
+  const flushPara = () => { if (para.length) { out += `<p>${inline(para.join(' '))}</p>`; paras++; para = [] } }
+  const flushList = () => { if (items.length) { out += listHtml(items); items = [] } }
+  for (const line of lines) {
+    if (!line.trim()) { flushPara(); continue }
+    const m = /^(\s*)([-*•]|\d+[.)])\s+(.*)$/.exec(line)
+    if (m) { flushPara(); items.push({ indent: m[1].length, kind: /\d/.test(m[2]) ? 'ol' : 'ul', text: m[3].trim(), more: [] }); continue }
+    // an indented line under a list item is that item's next paragraph
+    if (items.length && /^\s/.test(line) && !para.length) { items[items.length - 1].more.push(line.trim()); continue }
+    flushList()
+    para.push(line.trim())
   }
-  return blocks.map(b => {
-    // a block can mix a plain line with the list under it ("For" then "- " points)
-    const lines = b.split('\n').map(l => l.trim()).filter(Boolean)
-    let html = '', run: string[] = [], kind: 'ul' | 'ol' | 'p' | null = null
-    const flush = () => {
-      if (kind === 'ul') html += `<ul>${run.map(l => `<li><p>${inline(l.replace(/^[-*•]\s+/, ''))}</p></li>`).join('')}</ul>`
-      else if (kind === 'ol') html += `<ol>${run.map(l => `<li><p>${inline(l.replace(/^\d+[.)]\s+/, ''))}</p></li>`).join('')}</ol>`
-      else if (run.length) html += `<p>${inline(run.join(' '))}</p>`
-      run = []
-    }
-    for (const l of lines) {
-      const k = isBullet(l) ? 'ul' : isNumbered(l) ? 'ol' : 'p'
-      if (k !== kind) { flush(); kind = k }
-      run.push(l)
-    }
-    flush()
-    return html
-  }).join('')
+  flushPara()
+  flushList()
+  // one plain paragraph can go mid-sentence
+  if (allowInline && paras === 1 && out.startsWith('<p>') && out.endsWith('</p>') && !/<[uo]l>/.test(out)) return out.slice(3, -4)
+  return out
 }
 
 // ---- single words ------------------------------------------------------------------------------------

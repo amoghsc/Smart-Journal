@@ -3,12 +3,14 @@
 // Security model:
 //  - The GitHub token lives only in this function's secrets. It never reaches the browser.
 //  - The target repo is fixed by a secret too, so a caller cannot redirect a publish elsewhere.
-//  - The caller must be allowed to publish (nt_members.can_publish — the garden is one person's repo) and own the
+//  - The caller must be allowed to publish (nt_members.can_publish — the garden repo is Amogh's) and own the
 //    vault (reads go through RLS with their own JWT), and the vault must be `public` in the database — a private
 //    vault is refused here, not just hidden in the UI.
 //  - The vault's folder is derived here from its name in the database; the caller can only write the
 //    shared root files and files inside that one folder (strict path allowlist).
-//  - The new tree = the uploaded files + the folders of the other published vaults, kept as they are.
+//  - Several people can publish into the same garden. The new tree = the uploaded files + the folders of every
+//    other published vault (anyone's, via nt_published_vaults), kept as they are. Folder names are unique across
+//    everyone: a vault whose folder is taken is refused.
 //    Anything else (this vault's stale notes, a folder left by a rename or a deleted vault) is dropped,
 //    so the repo always mirrors what is published. Every publish is one auditable commit.
 //
@@ -114,7 +116,9 @@ async function publish(token: string, repo: string, branch: string, files: Recor
   const commit = await gh(token, 'POST', `/repos/${repo}/git/commits`, { message, tree: tree.data.sha, parents: [parent] })
   if (commit.status !== 201) throw new HttpError(502, `GitHub: could not create the commit (${commit.status})`)
 
-  const ref = await gh(token, 'PATCH', `/repos/${repo}/git/refs/heads/${branch}`, { sha: commit.data.sha, force: true })
+  // not forced: if someone else published since we read the branch, their commit stays and this one is refused
+  const ref = await gh(token, 'PATCH', `/repos/${repo}/git/refs/heads/${branch}`, { sha: commit.data.sha, force: false })
+  if (ref.status === 422) throw new HttpError(409, 'Someone else published at the same moment — please publish again')
   if (ref.status !== 200) throw new HttpError(502, `GitHub: could not move ${branch} (${ref.status})`)
   return { commit: commit.data.sha as string, unchanged: false }
 }
@@ -156,7 +160,7 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false },
     })
 
-    // the garden is one person's GitHub repo: only accounts marked can_publish may write to it
+    // the garden is Amogh's GitHub repo: only accounts marked can_publish may write to it
     const { data: allowed, error: allowedErr } = await sb.rpc('nt_can_publish')
     if (allowedErr) throw new HttpError(500, `Permission check failed: ${allowedErr.message}`)
     if (allowed !== true) throw new HttpError(403, 'Publishing isn’t available for your account')
@@ -172,17 +176,21 @@ Deno.serve(async (req: Request) => {
     if (!token || !repo) throw new HttpError(412, 'GitHub publishing is not set up yet')
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new HttpError(500, 'GITHUB_REPO must look like owner/name')
 
+    // the caller's own vault (RLS: nobody can publish someone else's)
     const { data: vaults, error: vaultsErr } = await sb.from('nt_vaults').select('id,name,kind,published_slug')
     if (vaultsErr) throw new HttpError(500, vaultsErr.message)
     const vault = vaults?.find(v => v.id === body.vault_id)
     if (!vault) throw new HttpError(404, 'Vault not found')
     if (vault.kind !== 'public') throw new HttpError(403, 'Only a public vault can be published')
 
+    // every other published vault in the garden, whoever owns it
+    const { data: published, error: publishedErr } = await sb.rpc('nt_published_vaults')
+    if (publishedErr) throw new HttpError(500, publishedErr.message)
     const slug = slugFor(vault.name)
-    const others = (vaults ?? []).filter(v => v.id !== vault.id && v.kind === 'public' && v.published_slug)
-    const clash = others.find(v => v.published_slug === slug)
-    if (clash) throw new HttpError(409, `“${clash.name}” is already published at /${slug}/ — rename one of the two vaults`)
-    const keep = new Set(others.map(v => v.published_slug as string))
+    const others = ((published ?? []) as { id: string; slug: string; title: string }[]).filter(v => v.id !== vault.id)
+    const clash = others.find(v => v.slug === slug)
+    if (clash) throw new HttpError(409, `“${clash.title}” is already published at /${slug}/ — give this vault a different name`)
+    const keep = new Set(others.map(v => v.slug))
 
     const files = validate(body.files, slug)
     const notes = Object.keys(files).filter(p => p.startsWith(`${slug}/`) && p.split('/').length === 3).length

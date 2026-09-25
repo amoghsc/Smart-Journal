@@ -185,11 +185,11 @@ export function buildSite(plan: SitePlan, vault: Vault, others: LandingVault[] =
   return files
 }
 
-/** Other public vaults already on the site, for the landing page. */
-export function publishedOthers(vaults: Vault[], except: string): LandingVault[] {
-  return vaults
-    .filter(v => v.kind === 'public' && v.id !== except && v.published_slug)
-    .map(v => ({ slug: v.published_slug!, title: v.site_title || v.name, description: v.site_description ?? '' }))
+/** Every other vault already on the site — anyone's, since several people publish to the same garden — for its landing page. */
+export async function publishedOthers(except: string): Promise<LandingVault[]> {
+  const { data, error } = await supabase.rpc('nt_published_vaults')
+  if (error) throw error
+  return ((data ?? []) as (LandingVault & { id: string })[]).filter(v => v.id !== except).map(({ slug, title, description }) => ({ slug, title, description }))
 }
 
 export interface GitHubStatus { configured: boolean; repo: string | null; branch: string; siteUrl: string | null }
@@ -212,8 +212,8 @@ export async function githubStatus(): Promise<GitHubStatus> {
 }
 
 /** Send the built site to the server, which commits it to the configured repo. The browser never sees the token. */
-export async function publishToGitHub(plan: SitePlan, vault: Vault, others: LandingVault[]): Promise<GitHubResult> {
-  const files = buildSite(plan, vault, others)
+export async function publishToGitHub(plan: SitePlan, vault: Vault): Promise<GitHubResult> {
+  const files = buildSite(plan, vault, await publishedOthers(vault.id))
   const { data, error } = await supabase.functions.invoke('nt-publish', { body: { vault_id: vault.id, files } })
   if (error) throw await fnError(error)
   return data as GitHubResult
@@ -235,7 +235,7 @@ export function downloadSite(plan: SitePlan, vault: Vault): number {
 }
 
 /** Publish a vault without the review dialog (used after renaming an already-published vault). */
-export async function republishVault(vault: Vault, pages: Page[], vaults: Vault[]): Promise<GitHubResult> {
+export async function republishVault(vault: Vault, pages: Page[]): Promise<GitHubResult> {
   const siteUrl = vault.site_url || (await githubStatus()).siteUrl || ''
-  return publishToGitHub(planSite(pages), { ...vault, site_url: siteUrl }, publishedOthers(vaults, vault.id))
+  return publishToGitHub(planSite(pages), { ...vault, site_url: siteUrl })
 }

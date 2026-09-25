@@ -44,7 +44,7 @@ export function RenameVaultDialog({ vault: initial, name, onClose }: Props) {
       const gh = await githubStatus()
       if (!gh.configured) { setNote('Renamed. GitHub publishing isn’t set up, so the site wasn’t updated.'); setStage('done'); return }
       setStage('publishing')
-      const r = await republishVault(renamed, pagesIn(vault.id), vaults.map(v => v.id === vault.id ? renamed : v))
+      const r = await republishVault(renamed, pagesIn(vault.id))
       setNote(r.unchanged ? 'Renamed. The site was already up to date.' : 'Renamed and republished.')
       setNewUrl(r.vaultUrl)
       await reload()

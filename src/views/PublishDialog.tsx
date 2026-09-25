@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Download, ExternalLink, GitBranch, Globe, ShieldCheck, Upload, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { downloadSite, githubStatus, planSite, publishedOthers, publishToGitHub, vaultSlug, type GitHubResult, type GitHubStatus } from '../lib/publish'
+import { downloadSite, githubStatus, planSite, publishToGitHub, vaultSlug, type GitHubResult, type GitHubStatus } from '../lib/publish'
 import { isDailyTitle, prettyDate } from '../lib/links'
 import type { Vault } from '../lib/types'
 
@@ -20,7 +20,7 @@ function ago(iso: string): string {
 
 /** Review exactly what will go public, then publish to GitHub (or export a zip). Nothing leaves without this step. */
 export function PublishDialog({ vault, onClose }: Props) {
-  const { pagesIn, updateVault, vaults, reload } = useStore()
+  const { pagesIn, updateVault, reload } = useStore()
   const [site, setSite] = useState({
     site_title: vault.site_title ?? vault.name,
     site_description: vault.site_description ?? '',
@@ -49,7 +49,7 @@ export function PublishDialog({ vault, onClose }: Props) {
     setBusy('github'); setErr(null); setResult(null)
     try {
       await updateVault(vault.id, settings())
-      setResult(await publishToGitHub(plan, { ...vault, ...settings() }, publishedOthers(vaults, vault.id)))
+      setResult(await publishToGitHub(plan, { ...vault, ...settings() }))
       await reload()   // the publisher records the vault's folder and publish time
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }

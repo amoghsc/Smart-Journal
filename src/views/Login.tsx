@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { appUrl, linkError, supabase } from '../lib/supabase'
 
 export function Login() {
   const [mode, setMode] = useState<'in' | 'up'>('in')
@@ -7,15 +7,16 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  // a reset or confirmation link that didn't work (usually expired) says why
+  const [err, setErr] = useState<string | null>(linkError ? `That link didn’t work: ${linkError}. Ask for a new one below.` : null)
 
   const forgot = async () => {
     if (!email.trim()) { setErr('Enter your email first'); return }
     setBusy(true); setErr(null); setMsg(null)
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin })
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: appUrl() })
       if (error) throw error
-      setMsg('Reset link sent to your email.')
+      setMsg('Reset link sent — check your email.')
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
 
@@ -27,7 +28,7 @@ export function Login() {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
         if (error) throw error
       } else {
-        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password })
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo: appUrl() } })
         if (error) throw error
         if (!data.session) setMsg('Account created. Check your email for a confirmation link, then sign in.')
       }

@@ -6,6 +6,7 @@ import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
 import { aiScoreGemini, aiScoreOn, aiTwoVersions, setAiScoreGemini, setAiScoreOn, setAiTwoVersions } from './lib/settings'
 import { Login } from './views/Login'
+import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
 import { Sidebar } from './views/Sidebar'
 import { CanvasPane } from './views/CanvasPane'
@@ -30,8 +31,9 @@ const titleFromHash = () => {
 }
 
 export default function App() {
-  const { session, ready } = useStore()
+  const { session, ready, recovering } = useStore()
   if (!ready) return <div className="center-screen muted">Loading…</div>
+  if (recovering) return <SetPassword />
   if (!session) return <Login />
   return <Workspace email={session.user.email ?? ''} />
 }

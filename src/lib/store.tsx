@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { openedFromReset, supabase } from './supabase'
 import type { CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
@@ -10,6 +10,9 @@ const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,created_at,u
 interface Store {
   session: Session | null
   ready: boolean
+  /** Signed in through a password-reset link: a new password is needed before anything else. */
+  recovering: boolean
+  endRecovery: () => void
   /** Every page in every vault. */
   allPages: Page[]
   /** Pages in the current vault. */
@@ -61,6 +64,8 @@ const SAVE_DELAY = 700
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [ready, setReady] = useState(false)
+  const [recovering, setRecovering] = useState(openedFromReset)
+  const endRecovery = useCallback(() => setRecovering(false), [])
   const [allPages, setAllPages] = useState<Page[]>([])
   const [vaults, setVaults] = useState<Vault[]>([])
   const [vaultId, setVaultId] = useState<string | null>(() => localStorage.getItem('vault'))
@@ -73,7 +78,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true) })
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => { if (e === 'PASSWORD_RECOVERY') setRecovering(true); setSession(s) })
     return () => sub.subscription.unsubscribe()
   }, [])
 
@@ -391,7 +396,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value: Store = {
-    session, ready, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
+    session, ready, recovering, endRecovery, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }

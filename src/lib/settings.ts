@@ -9,3 +9,22 @@ export function aiTwoVersions(): boolean {
 export function setAiTwoVersions(on: boolean) {
   try { localStorage.setItem(AI_TWO, on ? '1' : '0') } catch { /* private mode */ }
 }
+
+// AI score: how much of each piece of AI-written text is still the AI's, shown next to its ✦
+const AI_SCORE = 'ai-score'
+const AI_SCORE_GEMINI = 'ai-score-gemini'
+/** Fired on window when a setting changes, so open notes can redraw. */
+export const SETTINGS_EVENT = 'sj-settings'
+
+const flag = (key: string) => { try { return localStorage.getItem(key) !== '0' } catch { return true } }
+const setFlag = (key: string, on: boolean) => {
+  try { localStorage.setItem(key, on ? '1' : '0') } catch { /* private mode */ }
+  window.dispatchEvent(new Event(SETTINGS_EVENT))
+}
+
+/** Show the AI share (%) beside AI-written text (default on). */
+export const aiScoreOn = () => flag(AI_SCORE)
+export const setAiScoreOn = (on: boolean) => setFlag(AI_SCORE, on)
+/** Let Gemini judge the meaning part of the score (default on); off scores words and sentences only. */
+export const aiScoreGemini = () => flag(AI_SCORE_GEMINI)
+export const setAiScoreGemini = (on: boolean) => setFlag(AI_SCORE_GEMINI, on)

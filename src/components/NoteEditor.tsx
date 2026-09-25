@@ -8,9 +8,10 @@ import type { Fragment, Slice } from '@tiptap/pm/model'
 import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, LANGS, aiAvailable, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
-import { AI_INSERT, AiText } from '../lib/aiText'
+import { AiText, setAiScores } from '../lib/aiText'
+import { checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
-import { aiTwoVersions } from '../lib/settings'
+import { SETTINGS_EVENT, aiScoreGemini, aiScoreOn, aiTwoVersions } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -40,6 +41,8 @@ interface Props {
   /** Hands the editor instance to the parent (null on unmount). */
   onReady?: (editor: Editor | null) => void
   autoFocus?: boolean
+  /** The note's id once it is saved; AI-written pieces are recorded against it. */
+  pageId?: string
 }
 
 const LONG_PRESS_MS = 550
@@ -80,7 +83,7 @@ function normaliseUrl(raw: string): string | null {
 interface SuggestState { items: SuggestItem[]; index: number; rect: DOMRect | null; command: (item: SuggestItem) => void }
 
 /** Single-surface editor: what you type is what you see. Bullets, numbering, links, [[wikilinks]], comments, YouTube paste. */
-export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus }: Props) {
+export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus, pageId }: Props) {
   // latest callbacks, readable from editor options that are captured once
   const open = useRef(onOpenLink); open.current = onOpenLink
   const create = useRef(onCreatePage); create.current = onCreatePage
@@ -89,6 +92,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const titlesRef = useRef(titles); titlesRef.current = titles
   const date = useRef(pickDate); date.current = pickDate
   const ready = useRef(onReady); ready.current = onReady
+  const page = useRef(pageId); page.current = pageId
 
   // hover "unlink" affordance (pointer devices) and long-press unlink (touch)
   const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number } | null>(null)
@@ -270,6 +274,50 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     return () => { editor.off('transaction', place); ro.disconnect(); cancelAnimationFrame(frame); layer.remove(); badgeLayer.current = null }
   }, [editor])
 
+  // AI score: after edits, re-score the note's AI pieces against their originals (instant, in the browser); once you
+  // pause, ask Gemini about the meaning of pieces whose words changed (when that's switched on)
+  useEffect(() => {
+    if (!editor) return
+    const type = editor.schema.marks.aiText
+    let alive = true, quick = 0, slow = 0, checking = false
+    const score = async (checkMeanings: boolean) => {
+      if (!alive || editor.isDestroyed) return
+      const texts = pieceTexts(editor.state.doc, type)
+      if (texts.size) { try { await loadPieces(texts) } catch (e) { console.warn('ai score: could not load pieces', e); return } }
+      if (!alive || editor.isDestroyed) return
+      const gemini = aiScoreGemini(), show = aiScoreOn()
+      const now = pieceTexts(editor.state.doc, type)
+      const scores = new Map<string, Score>()
+      for (const [id, text] of now) { const s = scoreFor(id, text, gemini); if (s) scores.set(id, s) }
+      editor.view.dispatch(setAiScores(editor.state.tr, scores, show))
+      if (!checkMeanings || !gemini || !show || checking) return
+      const due = [...now].filter(([id, text]) => !scores.get(id)?.rewritten && meaningDue(id, text))
+      if (!due.length) return
+      checking = true
+      for (const [id, text] of due) { if (!alive) break; await checkMeaning(id, text) }
+      checking = false
+      if (alive) score(false)
+    }
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged) return
+      clearTimeout(quick); clearTimeout(slow)
+      quick = window.setTimeout(() => score(false), 400)
+      slow = window.setTimeout(() => score(true), 10_000)
+    }
+    const onSettings = () => score(true)
+    editor.on('transaction', onTransaction)
+    window.addEventListener(SETTINGS_EVENT, onSettings)
+    // on opening: show scores, then catch up on meanings that changed while the check was off
+    score(false)
+    const first = window.setTimeout(() => score(true), 1500)
+    return () => {
+      alive = false
+      clearTimeout(quick); clearTimeout(slow); clearTimeout(first)
+      editor.off('transaction', onTransaction)
+      window.removeEventListener(SETTINGS_EVENT, onSettings)
+    }
+  }, [editor])
+
   // content changed elsewhere (another device / compile) while this editor is idle
   useEffect(() => {
     // not while versions are showing: their positions would be lost
@@ -332,7 +380,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         if (!outs.length) { toast('The AI returned nothing', 'Try again'); return }
         const options = outs.map(o => resultContent(editor.schema, plan, o, task.heading))
         // only one distinct version: nothing to choose, so it goes straight in
-        if (options.length === 1) { applyFresh(plan.from, plan.to, options[0], plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null); setAiMode(false); return }
+        if (options.length === 1) { applyFresh(plan.from, plan.to, options[0], plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null, task.id); setAiMode(false); return }
         editor.chain().command(({ tr }) => {
           showCompare(tr, { at: plan.at, from: plan.from, to: plan.to, dom: compareDom.current! })
           tr.setMeta(bubbleKey, 'hide')
@@ -352,7 +400,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         setChoices({ word: word ?? '', from, to, options })
         return
       }
-      applyFresh(plan.from, plan.to, resultContent(editor.schema, plan, out, task.heading), plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null)
+      applyFresh(plan.from, plan.to, resultContent(editor.schema, plan, out, task.heading), plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null, task.id)
       setAiMode(false)
     } catch (e) {
       toast(`Couldn’t ${task.label.toLowerCase()}`, (e as Error).message)
@@ -366,7 +414,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
    * for that spot. It is marked as AI-written (saved with the note until you edit it) and highlighted as fresh,
    * and the cursor goes after it — a collapsed selection, so the toolbar closes.
    */
-  const applyFresh = (from: number, to: number, content: string | Fragment, original: Slice | null) => {
+  const applyFresh = (from: number, to: number, content: string | Fragment, original: Slice | null, task?: string) => {
     if (!editor) return
     const id = crypto.randomUUID()
     const chain = editor.chain().focus()
@@ -376,12 +424,13 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     inserted.command(({ tr }) => {
       const start = tr.mapping.map(from, -1), end = tr.mapping.map(to, 1)
       tr.addMark(start, end, editor.schema.marks.aiText.create({ id }))
-      tr.setMeta(AI_INSERT, true)
       markAiFresh(tr, start, end, original)
       tr.setMeta(bubbleKey, 'hide')
       tr.setSelection(Selection.near(tr.doc.resolve(end), -1))
       return true
     }).run()
+    // keep the text as the AI wrote it, to score your edits against
+    recordPiece(id, pieceTexts(editor.state.doc, editor.schema.marks.aiText).get(id) ?? '', task, page.current)
   }
 
   /**
@@ -407,7 +456,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       if (!c) return
       editor.setEditable(true, false)
       editor.view.dispatch(clearCompare(editor.state.tr))
-      applyFresh(c.from, c.to, content, c.to > c.from ? editor.state.doc.slice(c.from, c.to) : null)
+      applyFresh(c.from, c.to, content, c.to > c.from ? editor.state.doc.slice(c.from, c.to) : null, compare.task.id)
     }, animate ? OPTION_OUT_MS : 0)
   }
   /** Undo the whole AI operation: drop the versions, keep your text, unlock the note. */
@@ -424,12 +473,15 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     if (!editor || !choices) return
     const { from, to } = choices
     const original = editor.state.doc.slice(from, to)
+    const id = crypto.randomUUID()
     editor.chain().focus().command(({ tr }) => {
       tr.insertText(option, from, to)
+      tr.addMark(from, from + option.length, editor.schema.marks.aiText.create({ id }))
       markAiFresh(tr, from, from + option.length, original)
       tr.setMeta(bubbleKey, 'hide')
       return true
     }).setTextSelection(from + option.length).run()
+    recordPiece(id, option, 'synonyms', page.current)
     setChoices(null); setAiMode(false)
   }
 

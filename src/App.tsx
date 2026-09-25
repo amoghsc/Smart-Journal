@@ -4,7 +4,7 @@ import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
-import { aiTwoVersions, setAiTwoVersions } from './lib/settings'
+import { aiScoreGemini, aiScoreOn, aiTwoVersions, setAiScoreGemini, setAiScoreOn, setAiTwoVersions } from './lib/settings'
 import { Login } from './views/Login'
 import { PagePane } from './views/PagePane'
 import { Sidebar } from './views/Sidebar'
@@ -47,6 +47,8 @@ function Workspace({ email }: { email: string }) {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('theme') as Theme) || 'system')
   const [anim, setAnim] = useState(() => localStorage.getItem('anim') !== '0')
   const [aiTwo, setAiTwo] = useState(aiTwoVersions)
+  const [aiScore, setAiScore] = useState(aiScoreOn)
+  const [aiGemini, setAiGemini] = useState(aiScoreGemini)
   const [focusLast, setFocusLast] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [closing, setClosing] = useState<string[]>([])
@@ -191,6 +193,10 @@ function Workspace({ email }: { email: string }) {
             <button onClick={cycleTheme}>Theme: {theme}</button>
             <button onClick={() => setAnim(a => !a)}>Animations: {anim ? 'on' : 'off'}</button>
             <button onClick={() => { setAiTwoVersions(!aiTwo); setAiTwo(!aiTwo) }} title="Two: compare two AI versions and pick one. One: apply a single response straight away.">AI versions: {aiTwo ? 'two to choose from' : 'one'}</button>
+            <button onClick={() => { setAiScoreOn(!aiScore); setAiScore(!aiScore) }} title="Beside AI-written text, show how much of it is still the AI's (%)">AI score: {aiScore ? 'on' : 'off'}</button>
+            {aiScore && <button onClick={() => { setAiScoreGemini(!aiGemini); setAiGemini(!aiGemini) }}
+              title="Gemini also judges how far the meaning has moved (20% of the score). Off: words and sentences only. Past results are kept and caught up when you switch it back on.">
+              Use Gemini to evaluate AI score: {aiGemini ? 'on' : 'off'}</button>}
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
         )}

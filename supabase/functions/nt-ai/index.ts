@@ -3,9 +3,11 @@
 //  - The Gemini key lives only in this function's secrets (GEMINI_API_KEY); the browser never sees it.
 //  - Only signed-in members can call it (checked through RLS with the caller's JWT).
 //  - The model sees only the text the user selected — no search grounding, no tools, no other notes.
+//    (The AI score's meaning check sends one AI-written piece: as written, and as it reads after your edits.)
 //
 // Secrets: GEMINI_API_KEY; optional GEMINI_MODEL (default gemini-3.6-flash) and GEMINI_FALLBACKS
-// (comma-separated, tried in order when the main model is overloaded or rate-limited).
+// (comma-separated, tried in order when the main model is overloaded or rate-limited); optional GEMINI_EMBED_MODEL
+// (default gemini-embedding-001) for the AI score.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const ALLOWED_ORIGINS = ['https://amoghsc.github.io', 'http://localhost:5183']
@@ -161,6 +163,31 @@ async function gemini(key: string, models: string[], system: string, text: strin
   throw new HttpError(502, `Gemini couldn’t do this (${lastStatus}): ${lastMessage}`)
 }
 
+/**
+ * How close two texts are in meaning: the cosine similarity of their Gemini embeddings (about 0.7 for unrelated
+ * text, above 0.95 for close paraphrases). Used for the meaning part of the AI score.
+ */
+async function similarity(key: string, a: string, b: string): Promise<number> {
+  const model = Deno.env.get('GEMINI_EMBED_MODEL') || 'gemini-embedding-001'
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({ requests: [a, b].map(text => ({ model: `models/${model}`, content: { parts: [{ text }] }, taskType: 'SEMANTIC_SIMILARITY' })) }),
+  })
+  if (!res.ok) {
+    const message = googleMessage(await res.text())
+    console.error('nt-ai embed', model, res.status, message)
+    if (res.status === 429) throw new HttpError(429, 'The free Gemini quota is used up for now — try again in a minute')
+    throw new HttpError(502, `Gemini couldn’t compare the texts (${res.status}): ${message}`)
+  }
+  const data = await res.json()
+  const [x, y] = (data?.embeddings ?? []).map((e: { values?: number[] }) => e.values ?? [])
+  if (!x?.length || x.length !== y?.length) throw new HttpError(502, 'Gemini returned no embeddings')
+  let dot = 0, nx = 0, ny = 0
+  for (let i = 0; i < x.length; i++) { dot += x[i] * y[i]; nx += x[i] * x[i]; ny += y[i] * y[i] }
+  return dot / (Math.sqrt(nx * ny) || 1)
+}
+
 Deno.serve(async (req: Request) => {
   const headers = corsHeaders(req)
   if (req.method === 'OPTIONS') return new Response('ok', { headers })
@@ -183,6 +210,14 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}))
     if (body.action === 'status') return json(200, { configured: !!geminiKey, tasks: Object.keys(TASKS) })
     if (!geminiKey) throw new HttpError(412, 'AI isn’t set up yet')
+
+    // AI score: how close an edited piece still is in meaning to what the AI wrote
+    if (body.action === 'meaning') {
+      const a = typeof body.a === 'string' ? body.a.trim() : '', b = typeof body.b === 'string' ? body.b.trim() : ''
+      if (!a || !b) throw new HttpError(400, 'Two texts are needed')
+      if (a.length > MAX_CHARS || b.length > MAX_CHARS) throw new HttpError(413, 'Text too long to compare')
+      return json(200, { similarity: await similarity(geminiKey, a, b) })
+    }
 
     // word-level tasks have their own output format; the shared rules are for rewriting passages
     const prompt = Object.hasOwn(TASKS, body.task) ? TASKS[body.task] : undefined

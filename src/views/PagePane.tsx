@@ -195,7 +195,8 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
       <div ref={scrollRef} className={'pane-scroll' + (showComments ? '' : ' comments-hidden')}>
         <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
           onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
-          comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus} />
+          comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus}
+          pageId={page && !page.local ? page.id : undefined} />
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
         )}

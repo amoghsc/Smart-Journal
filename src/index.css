@@ -489,14 +489,29 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-undo:hover { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
 @keyframes ai-undo-life { 0%, 90% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 
-/* AI-written text you haven't edited: a thin purple rule in the margin, ✦ where a run starts; partly-AI lines get ✦ and a dotted underline */
+/* AI-written text: a thin purple rule beside lines of it, a dotted underline where it's part of a line, and ✦ with its
+   AI share in the margin where each piece starts (hover for the breakdown) */
 .note .ai-block, .note .ai-part { position: relative; }
 .note .ai-block::before { content: ''; position: absolute; left: -10px; top: -0.2em; bottom: -0.2em; width: 2px; border-radius: 1px; background: rgba(139, 92, 246, 0.35); }
-.note .ai-first::after { content: '✦'; position: absolute; left: -24px; top: 0.3em; font-size: 10px; line-height: 1; color: rgba(139, 92, 246, 0.6); pointer-events: none; }
 .note li > .ai-block::before { left: calc(-1.25em - 6px); }
-.note li > .ai-first::after { left: calc(-1.25em - 20px); }
 .note .ai-part .ai-text { text-decoration: underline dotted rgba(139, 92, 246, 0.5); text-underline-offset: 4px; }
-.ai-option-body .ai-block::before, .ai-option-body .ai-first::after { display: none; }
+.ai-score { position: absolute; right: calc(100% + 14px); top: 0.3em; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  white-space: nowrap; font-size: 10px; line-height: 1.1; font-variant-numeric: tabular-nums; color: rgba(139, 92, 246, 0.75); user-select: none; cursor: default; }
+.ai-score .ai-star { font-size: 10px; }
+.note li > * > .ai-score { right: calc(100% + 1.25em + 10px); }
+.ai-score:hover { color: #8b5cf6; }
+.ai-score:hover::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; padding: 4px 8px; border-radius: 6px;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,0.15); font-size: 12px; line-height: 1.4; }
+/* three notes side by side leave a narrower margin */
+.panes[data-count="3"] .note .ai-block::before { left: -8px; }
+.panes[data-count="3"] .ai-score { right: calc(100% + 11px); font-size: 9.5px; }
+/* phones: no room in the margin, so the score sits at the line's top-right instead */
+@media (max-width: 800px) {
+  .note .ai-block::before { left: -8px; }
+  .ai-score, .note li > * > .ai-score { right: 0; top: -0.95em; flex-direction: row; gap: 3px; padding: 0 5px; border-radius: 8px; background: var(--bg); line-height: 1.5; }
+  .ai-score:hover::after { left: auto; right: 0; }
+}
+.ai-option-body .ai-block::before, .ai-option-body .ai-score { display: none; }
 
 /* the text an option would replace */
 .ai-source { background: rgba(139, 92, 246, 0.10); text-decoration: underline dashed rgba(139, 92, 246, 0.7); text-underline-offset: 4px; }

@@ -23,6 +23,46 @@ export function setAiScores(tr: Transaction, scores: Map<string, Score>, show: b
 
 const pct = (x: number) => `${Math.round(x * 100)}%`
 
+/** One line of the hover card: a label on the left, its value on the right. */
+function row(label: string, value: string, cls = ''): HTMLElement {
+  const r = document.createElement('span')
+  r.className = 'ai-card-row' + (cls ? ' ' + cls : '')
+  const l = document.createElement('span'), v = document.createElement('span')
+  l.textContent = label
+  v.textContent = value
+  r.append(l, v)
+  return r
+}
+
+/** The hover card: the overall AI score, a rule, then its three parts — all AI shares, higher meaning more of the AI's. */
+function card(score: Score | undefined, show: boolean): HTMLElement {
+  const c = document.createElement('span')
+  c.className = 'ai-card'
+  if (!show) { c.append(row('Written by AI', '')); return c }
+  if (!score) { c.append(row('Working out the AI score…', '')); return c }
+  const rule = document.createElement('span')
+  rule.className = 'ai-card-rule'
+  c.append(
+    row('Overall AI score', pct(score.ai), 'total'),
+    rule,
+    row('Words', pct(score.words)),
+    row('Sentences', pct(score.sentences)),
+    row('Meaning', score.meaning != null ? pct(score.meaning) : score.stale ? 'checking…' : 'off'),
+  )
+  const notes = [
+    score.seeded ? 'Counts only what the AI changed in your text.' : '',
+    score.meaning != null && score.stale ? 'Meaning is being re-checked.' : '',
+    score.meaning == null && !score.stale ? 'Meaning check is off in settings.' : '',
+  ].filter(Boolean)
+  if (notes.length) {
+    const n = document.createElement('span')
+    n.className = 'ai-card-note'
+    n.textContent = notes.join(' ')
+    c.append(n)
+  }
+  return c
+}
+
 function badge(id: string, score: Score | undefined, show: boolean): HTMLElement {
   const el = document.createElement('span')
   el.className = 'ai-score'
@@ -38,10 +78,7 @@ function badge(id: string, score: Score | undefined, show: boolean): HTMLElement
     num.textContent = pct(score.ai)
     el.append(num)
   }
-  el.dataset.tip = !show ? 'Written by AI'
-    : !score ? 'Written by AI — working out the score…'
-    : `AI share ${pct(score.ai)} · words ${pct(score.words)} · sentences ${pct(score.sentences)} · meaning ` +
-      (score.meaning == null ? 'off' : pct(score.meaning) + (score.stale ? ' (updating…)' : ''))
+  el.append(card(score, show))
   return el
 }
 
@@ -66,7 +103,7 @@ function build(doc: PMNode, type: MarkType, { scores, show }: ScoreState): Decor
     decos.push(Decoration.node(pos, pos + node.nodeSize, { class: ai === total ? 'ai-block' : 'ai-part' }))
     starts.forEach((id, k) => {
       const s = scores.get(id)
-      const label = show && s ? `${pct(s.ai)}|${s.stale}|${s.meaning}` : String(show)
+      const label = show && s ? [s.ai, s.words, s.sentences, s.meaning, s.stale, s.seeded].map(String).join('|') : String(show)
       decos.push(Decoration.widget(pos + 1, () => {
         const el = badge(id, s, show)
         if (k) el.style.marginTop = `${k * 1.3}em`

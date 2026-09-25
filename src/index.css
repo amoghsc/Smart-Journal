@@ -500,8 +500,19 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-score .ai-star { font-size: 10px; }
 .note li > * > .ai-score { right: calc(100% + 1.25em + 10px); }
 .ai-score:hover { color: #8b5cf6; }
-.ai-score:hover::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; padding: 4px 8px; border-radius: 6px;
-  background: var(--bg); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,0.15); font-size: 12px; line-height: 1.4; }
+/* hover card: overall score on top (bold), a grey rule, then the three parts; labels left, numbers right */
+.ai-card { display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: 236px; padding: 8px 12px 9px; border-radius: 8px;
+  flex-direction: column; gap: 3px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(0,0,0,0.16);
+  font-size: 12.5px; line-height: 1.45; white-space: normal; text-align: left; cursor: default; }
+.ai-score:hover .ai-card { display: flex; }
+.ai-card-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; white-space: nowrap; }
+.ai-card-row > :last-child { font-variant-numeric: tabular-nums; text-align: right; }
+.ai-card-row:not(.total) { color: var(--muted); }
+.ai-card-row:not(.total) > :last-child { color: var(--fg); }
+.ai-card-row.total { font-weight: 600; font-size: 13px; }
+.ai-card-row.total > :last-child { font-weight: 700; color: #8b5cf6; }
+.ai-card-rule { height: 1px; background: var(--line); margin: 4px 0 3px; }
+.ai-card-note { margin-top: 5px; font-size: 11px; color: var(--muted); line-height: 1.35; }
 /* three notes side by side leave a narrower margin */
 .panes[data-count="3"] .note .ai-block::before { left: -8px; }
 .panes[data-count="3"] .ai-score { right: calc(100% + 11px); font-size: 9.5px; }
@@ -509,7 +520,7 @@ p.small { margin: 0; line-height: 1.45; }
 @media (max-width: 800px) {
   .note .ai-block::before { left: -8px; }
   .ai-score, .note li > * > .ai-score { right: 0; top: -0.95em; flex-direction: row; gap: 3px; padding: 0 5px; border-radius: 8px; background: var(--bg); line-height: 1.5; }
-  .ai-score:hover::after { left: auto; right: 0; }
+  .ai-card { left: auto; right: 0; }
 }
 .ai-option-body .ai-block::before, .ai-option-body .ai-score { display: none; }
 

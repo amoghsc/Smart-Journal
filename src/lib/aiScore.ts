@@ -2,15 +2,19 @@ import type { MarkType, Node as PMNode } from '@tiptap/pm/model'
 import { supabase } from './supabase'
 
 /**
- * AI score: how much of a piece of AI-written text is still the AI's, comparing it now with the text as the AI
- * wrote it (stored in nt_ai_pieces). Each part is an AI share from 0 to 1 — higher means more of it is the AI's:
+ * AI score: how much of a piece of AI-written text is the AI's. It compares three versions, stored in nt_ai_pieces:
+ * your text before the AI touched it (the seed — none when the AI wrote something new), the text as the AI wrote
+ * it, and the text now. Only what the AI brought counts as the AI's: a grammar fix of your paragraph scores low,
+ * a story it wrote from scratch starts at 100%, and your later edits bring either down. Each part is an AI share
+ * from 0 to 1:
  *
- *   words      50%  the AI's words still there, in order (spaces, punctuation and case don't count)
- *   sentences  30%  the AI's sentences that haven't been substantially rewritten
- *   meaning    20%  how close the meaning still is (Gemini embeddings; optional, see settings)
+ *   words      50%  words the AI introduced that are still there, in order (spaces, punctuation and case don't count)
+ *   sentences  30%  sentences the AI wrote (not near-copies of yours) that haven't been substantially rewritten
+ *   meaning    20%  how far the AI moved the meaning from your text, times how much of its meaning is still there
+ *                   (Gemini embeddings; optional, see settings)
  *
- * Without the meaning part, words and sentences share the score 62.5 / 37.5. A piece counts as completely
- * rewritten — and loses its marker — once none of the AI's wording is left (words and sentences both 0).
+ * Without the meaning part, words and sentences share the score 62.5 / 37.5. A piece with none of the AI's wording
+ * left counts as yours, and loses its marker.
  */
 
 export interface Score {
@@ -22,9 +26,19 @@ export interface Score {
   /** The meaning part is from an earlier version of the text; a fresh check is due. */
   stale: boolean
   rewritten: boolean
+  /** The AI worked from your text (rather than writing something new). */
+  seeded: boolean
 }
 
-interface Piece { original: string; meaning: number | null; meaningOf: string | null }
+interface Piece {
+  original: string
+  seed: string | null
+  /** How far the AI moved the meaning from the seed (1 without a seed; null until checked). */
+  seedMeaning: number | null
+  /** How much of the AI's meaning is still there, for the text hashed as `meaningOf`. */
+  meaning: number | null
+  meaningOf: string | null
+}
 const pieces = new Map<string, Piece>()
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -57,38 +71,47 @@ function lcsPairs(a: string[], b: string[]): [number, number][] {
   return out
 }
 
-/** Share of the AI's words still in place. Lone shared words ("the", "and") are coincidence, so only runs of two or more count. */
-export function wordShare(a: string[], b: string[]): number {
-  const max = Math.max(a.length, b.length)
-  if (!max) return 0
+/** Words of `a` still in `b`, in order. Lone shared words ("the", "and") are coincidence, so only runs of two or more count. */
+function keptPairs(a: string[], b: string[]): [number, number][] {
   const pairs = lcsPairs(a, b)
-  if (Math.min(a.length, b.length) < 3) return pairs.length / max
-  let kept = 0, run = 0
-  pairs.forEach(([i, j], k) => {
-    run++
+  if (Math.min(a.length, b.length) < 3) return pairs
+  const out: [number, number][] = []
+  let run: [number, number][] = []
+  pairs.forEach((p, k) => {
+    run.push(p)
     const next = pairs[k + 1]
-    if (!next || next[0] !== i + 1 || next[1] !== j + 1) { if (run >= 2) kept += run; run = 0 }
+    if (!next || next[0] !== p[0] + 1 || next[1] !== p[1] + 1) { if (run.length >= 2) out.push(...run); run = [] }
   })
-  return kept / max
+  return out
+}
+
+/** Share of the text now that is words the AI introduced (not ones it kept from your seed). */
+export function wordShare(ai: string[], now: string[], seed: string[] | null): number {
+  const max = Math.max(ai.length, now.length)
+  if (!max) return 0
+  const fromSeed = new Set(seed ? keptPairs(seed, ai).map(([, j]) => j) : [])
+  return keptPairs(ai, now).filter(([i]) => !fromSeed.has(i)).length / max
 }
 
 const sentences = (s: string) => s.split(/(?<=[.!?।॥])\s+|\n+/).map(words).filter(w => w.length)
+const likeness = (x: string[], y: string[]) => lcsPairs(x, y).length / Math.max(x.length, y.length, 1)
 
-/** Share of sentences that are still the AI's: at least 60% of their words survive, in order. */
-export function sentenceShare(original: string, current: string): number {
-  const sa = sentences(original), sb = sentences(current)
+/** Share of sentences now that the AI wrote (not near-copies of yours) and that haven't been substantially rewritten. */
+export function sentenceShare(ai: string, now: string, seed: string | null): number {
+  const sa = sentences(ai), sb = sentences(now), ss = seed ? sentences(seed) : []
   const max = Math.max(sa.length, sb.length)
   if (!max) return 0
+  const aiWrote = sa.map(s => !ss.some(x => likeness(x, s) >= 0.6))
   const used = new Set<number>()
   let kept = 0
   for (const s of sb) {
     let best = -1, bestRatio = 0
     sa.forEach((o, i) => {
       if (used.has(i)) return
-      const r = lcsPairs(o, s).length / Math.max(o.length, s.length)
+      const r = likeness(o, s)
       if (r > bestRatio) { bestRatio = r; best = i }
     })
-    if (best >= 0 && bestRatio >= 0.6) { used.add(best); kept++ }
+    if (best >= 0 && bestRatio >= 0.6) { used.add(best); if (aiWrote[best]) kept++ }
   }
   return kept / max
 }
@@ -120,26 +143,38 @@ export function pieceTexts(doc: PMNode, type: MarkType): Map<string, string> {
   return new Map([...lines].map(([id, l]) => [id, l.join('\n').trim()]))
 }
 
-/** Remember a piece the AI just wrote, as written. */
-export async function recordPiece(id: string, original: string, task?: string, pageId?: string) {
+/** Fired on window when a piece has been recorded, so its note can score it (and check the meaning) right away. */
+export const PIECE_EVENT = 'sj-ai-piece'
+
+/** Remember a piece the AI just wrote, as written, and your text it replaced (`seed`; none for new writing). */
+export async function recordPiece(id: string, original: string, seed: string | null, task?: string, pageId?: string) {
   const meaningOf = wordsHash(original)
-  pieces.set(id, { original, meaning: 1, meaningOf })
-  const { error } = await supabase.from('nt_ai_pieces')
-    .upsert({ id, original, task: task ?? null, page_id: pageId ?? null, meaning: 1, meaning_of: meaningOf }, { onConflict: 'id', ignoreDuplicates: true })
+  const s = seed?.trim() || null
+  pieces.set(id, { original, seed: s, seedMeaning: s ? null : 1, meaning: 1, meaningOf })
+  const { error } = await supabase.from('nt_ai_pieces').upsert(
+    { id, original, seed: s, seed_meaning: s ? null : 1, task: task ?? null, page_id: pageId ?? null, meaning: 1, meaning_of: meaningOf },
+    { onConflict: 'id', ignoreDuplicates: true })
   if (error) console.warn('ai score: could not save piece', error.message)
+  window.dispatchEvent(new Event(PIECE_EVENT))
 }
 
 /** Fetch the originals of these pieces. Pieces marked before scores existed start from their current text. */
 export async function loadPieces(current: Map<string, string>): Promise<void> {
   const missing = [...current.keys()].filter(id => !pieces.has(id) && UUID.test(id))
   if (!missing.length) return
-  const { data, error } = await supabase.from('nt_ai_pieces').select('id, original, meaning, meaning_of').in('id', missing)
+  const { data, error } = await supabase.from('nt_ai_pieces').select('id, original, seed, seed_meaning, meaning, meaning_of').in('id', missing)
   if (error) throw error
-  for (const r of data ?? []) pieces.set(r.id as string, { original: r.original as string, meaning: r.meaning as number | null, meaningOf: r.meaning_of as string | null })
+  for (const r of data ?? []) {
+    pieces.set(r.id as string, {
+      original: r.original as string, seed: (r.seed as string | null) ?? null,
+      seedMeaning: r.seed ? (r.seed_meaning as number | null) : 1,
+      meaning: r.meaning as number | null, meaningOf: r.meaning_of as string | null,
+    })
+  }
   const unknown = missing.filter(id => !pieces.has(id))
   if (!unknown.length) return
-  const rows = unknown.map(id => ({ id, original: current.get(id)!, meaning: 1, meaning_of: wordsHash(current.get(id)!) }))
-  for (const r of rows) pieces.set(r.id, { original: r.original, meaning: 1, meaningOf: r.meaning_of })
+  const rows = unknown.map(id => ({ id, original: current.get(id)!, seed_meaning: 1, meaning: 1, meaning_of: wordsHash(current.get(id)!) }))
+  for (const r of rows) pieces.set(r.id, { original: r.original, seed: null, seedMeaning: 1, meaning: 1, meaningOf: r.meaning_of })
   const { error: e2 } = await supabase.from('nt_ai_pieces').upsert(rows, { onConflict: 'id', ignoreDuplicates: true })
   if (e2) console.warn('ai score: could not save pieces', e2.message)
 }
@@ -148,36 +183,58 @@ export async function loadPieces(current: Map<string, string>): Promise<void> {
 export function scoreFor(id: string, current: string, gemini: boolean): Score | null {
   const p = pieces.get(id)
   if (!p) return null
-  const w = wordShare(words(p.original), words(current))
-  const s = sentenceShare(p.original, current)
-  const h = wordsHash(current), same = h === wordsHash(p.original)
-  // same words as the AI wrote: same meaning, no need to ask. Otherwise the last check stands until the next one.
-  const meaning = !gemini ? null : same ? 1 : p.meaning
-  const stale = gemini && !same && p.meaningOf !== h
+  const seedWords = p.seed ? words(p.seed) : null
+  const w = wordShare(words(p.original), words(current), seedWords)
+  const s = sentenceShare(p.original, current, p.seed)
+  const h = wordsHash(current)
+  // same words as the AI wrote: its meaning is all still there, no need to ask
+  const same = h === wordsHash(p.original)
+  const kept = !gemini ? null : same ? 1 : p.meaning
+  const meaning = kept == null || p.seedMeaning == null ? null : kept * p.seedMeaning
+  const stale = gemini && ((!same && p.meaningOf !== h) || p.seedMeaning == null)
   const ai = meaning == null ? (0.5 * w + 0.3 * s) / 0.8 : 0.5 * w + 0.3 * s + 0.2 * meaning
-  return { ai, words: w, sentences: s, meaning, stale, rewritten: w === 0 && s === 0 }
+  return { ai, words: w, sentences: s, meaning, stale, rewritten: w === 0 && s === 0, seeded: !!p.seed }
 }
 
-/** Does piece `id` need a fresh meaning check for this text? */
+/** Does piece `id` need a meaning check (of the AI's change to your text, or of your edits since)? */
 export function meaningDue(id: string, current: string): boolean {
   const p = pieces.get(id)
   if (!p) return false
   const h = wordsHash(current)
-  return h !== wordsHash(p.original) && p.meaningOf !== h
+  return p.seedMeaning == null || (h !== wordsHash(p.original) && p.meaningOf !== h)
 }
 
-// cosine similarity of the two embeddings → AI share of the meaning: unrelated texts sit around 0.7, close paraphrases above 0.95
+// cosine similarity of two embeddings → how different the meaning is: unrelated texts sit around 0.7, close paraphrases above 0.95
 const LOW = 0.7, HIGH = 0.95
+const closeness = (similarity: number) => Math.min(1, Math.max(0, (similarity - LOW) / (HIGH - LOW)))
 
-/** Ask Gemini how close the meaning still is, and store it. Quietly gives up (quota, offline). */
+async function similarity(a: string, b: string): Promise<number | null> {
+  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { action: 'meaning', a, b } })
+  if (error || typeof data?.similarity !== 'number') { console.warn('ai score: meaning check failed', error?.message ?? data); return null }
+  return data.similarity as number
+}
+
+/** Ask Gemini what's due for piece `id` and store it. Quietly gives up (quota, offline). */
 export async function checkMeaning(id: string, current: string): Promise<void> {
   const p = pieces.get(id)
   if (!p) return
+  const patch: Record<string, unknown> = {}
+  if (p.seedMeaning == null && p.seed) {
+    const sim = await similarity(p.seed, p.original)
+    if (sim == null) return
+    p.seedMeaning = 1 - closeness(sim)
+    patch.seed_meaning = p.seedMeaning
+  }
   const h = wordsHash(current)
-  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { action: 'meaning', a: p.original, b: current } })
-  if (error || typeof data?.similarity !== 'number') { console.warn('ai score: meaning check failed', error?.message ?? data); return }
-  p.meaning = Math.min(1, Math.max(0, (data.similarity - LOW) / (HIGH - LOW)))
-  p.meaningOf = h
-  const { error: e2 } = await supabase.from('nt_ai_pieces').update({ meaning: p.meaning, meaning_of: h, updated_at: new Date().toISOString() }).eq('id', id)
-  if (e2) console.warn('ai score: could not save meaning', e2.message)
+  if (h !== wordsHash(p.original) && p.meaningOf !== h) {
+    const sim = await similarity(p.original, current)
+    if (sim != null) {
+      p.meaning = closeness(sim)
+      p.meaningOf = h
+      Object.assign(patch, { meaning: p.meaning, meaning_of: h })
+    }
+  }
+  if (!Object.keys(patch).length) return
+  const { error } = await supabase.from('nt_ai_pieces').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
+  if (error) console.warn('ai score: could not save meaning', error.message)
 }

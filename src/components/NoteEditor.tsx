@@ -9,7 +9,7 @@ import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader
 import { AI_TASKS, LANGS, aiAvailable, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
-import { checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
+import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
 import { SETTINGS_EVENT, aiScoreGemini, aiScoreOn, aiTwoVersions } from '../lib/settings'
 import { toast } from '../lib/toast'
@@ -307,6 +307,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const onSettings = () => score(true)
     editor.on('transaction', onTransaction)
     window.addEventListener(SETTINGS_EVENT, onSettings)
+    window.addEventListener(PIECE_EVENT, onSettings)
     // on opening: show scores, then catch up on meanings that changed while the check was off
     score(false)
     const first = window.setTimeout(() => score(true), 1500)
@@ -315,6 +316,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       clearTimeout(quick); clearTimeout(slow); clearTimeout(first)
       editor.off('transaction', onTransaction)
       window.removeEventListener(SETTINGS_EVENT, onSettings)
+      window.removeEventListener(PIECE_EVENT, onSettings)
     }
   }, [editor])
 
@@ -429,8 +431,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       tr.setSelection(Selection.near(tr.doc.resolve(end), -1))
       return true
     }).run()
-    // keep the text as the AI wrote it, to score your edits against
-    recordPiece(id, pieceTexts(editor.state.doc, editor.schema.marks.aiText).get(id) ?? '', task, page.current)
+    // keep the text as the AI wrote it, and yours that it replaced, to score against
+    const seed = original ? original.content.textBetween(0, original.content.size, '\n', ' ') : null
+    recordPiece(id, pieceTexts(editor.state.doc, editor.schema.marks.aiText).get(id) ?? '', seed, task, page.current)
   }
 
   /**
@@ -481,7 +484,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       tr.setMeta(bubbleKey, 'hide')
       return true
     }).setTextSelection(from + option.length).run()
-    recordPiece(id, option, 'synonyms', page.current)
+    recordPiece(id, option, original.content.textBetween(0, original.content.size, '\n', ' '), 'synonyms', page.current)
     setChoices(null); setAiMode(false)
   }
 

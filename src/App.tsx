@@ -17,6 +17,11 @@ const applyTheme = (t: Theme) => { if (t === 'system') delete document.documentE
 const applyAnim = (on: boolean) => { if (on) delete document.documentElement.dataset.anim; else document.documentElement.dataset.anim = 'off' }
 const PANE_OUT_MS = 180
 
+/** Note text sizes: the first is the original 15px; the middle is the default. */
+const TEXT_SIZES = [{ id: 's', px: 15, label: 'Small' }, { id: 'm', px: 17, label: 'Medium' }, { id: 'l', px: 19, label: 'Large' }] as const
+type TextSize = typeof TEXT_SIZES[number]['id']
+const applyTextSize = (id: TextSize) => document.documentElement.style.setProperty('--note-size', `${TEXT_SIZES.find(t => t.id === id)!.px}px`)
+
 const MAX_PANES = 3
 
 const titleFromHash = () => {
@@ -46,6 +51,7 @@ function Workspace({ email }: { email: string }) {
   const [menu, setMenu] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('theme') as Theme) || 'system')
   const [anim, setAnim] = useState(() => localStorage.getItem('anim') !== '0')
+  const [textSize, setTextSize] = useState<TextSize>(() => { const v = localStorage.getItem('text-size'); return v === 's' || v === 'l' ? v : 'm' })
   const [aiTwo, setAiTwo] = useState(aiTwoVersions)
   const [aiScore, setAiScore] = useState(aiScoreOn)
   const [aiGemini, setAiGemini] = useState(aiScoreGemini)
@@ -59,6 +65,7 @@ function Workspace({ email }: { email: string }) {
 
   useEffect(() => applyTheme(theme), [theme])
   useEffect(() => { applyAnim(anim); localStorage.setItem('anim', anim ? '1' : '0') }, [anim])
+  useEffect(() => { applyTextSize(textSize); localStorage.setItem('text-size', textSize) }, [textSize])
   useEffect(() => { localStorage.setItem('canvas-open', canvasOpen ? '1' : '0') }, [canvasOpen])
   useEffect(() => { if (canvasId) localStorage.setItem('canvas', canvasId) }, [canvasId])
   // keep the canvas mounted until its slide-out has finished
@@ -190,6 +197,15 @@ function Workspace({ email }: { email: string }) {
         {menu && (
           <div className="menu" onMouseLeave={() => setMenu(false)}>
             <div className="menu-email">{email}</div>
+            <div className="menu-row" role="group" aria-label="Text size">
+              <span>Text size</span>
+              <span className="size-pick">
+                {TEXT_SIZES.map((t, i) => (
+                  <button key={t.id} className={textSize === t.id ? 'on' : ''} aria-pressed={textSize === t.id} title={`${t.label} (${t.px}px)`}
+                    onClick={() => setTextSize(t.id)} style={{ fontSize: 12 + i * 3 }}>A</button>
+                ))}
+              </span>
+            </div>
             <button onClick={cycleTheme}>Theme: {theme}</button>
             <button onClick={() => setAnim(a => !a)}>Animations: {anim ? 'on' : 'off'}</button>
             <button onClick={() => { setAiTwoVersions(!aiTwo); setAiTwo(!aiTwo) }} title="Two: compare two AI versions and pick one. One: apply a single response straight away.">AI versions: {aiTwo ? 'two to choose from' : 'one'}</button>

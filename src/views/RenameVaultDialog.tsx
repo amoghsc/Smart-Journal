@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink, Pencil, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { githubStatus, republishVault, vaultSlug } from '../lib/publish'
+import { githubStatus, republishVault, vaultSlug, waitUntilLive } from '../lib/publish'
 import type { Vault } from '../lib/types'
 
 interface Props {
@@ -45,10 +45,14 @@ export function RenameVaultDialog({ vault: initial, name, onClose }: Props) {
       if (!gh.configured) { setNote('Renamed. GitHub publishing isn’t set up, so the site wasn’t updated.'); setStage('done'); return }
       setStage('publishing')
       const r = await republishVault(renamed, pagesIn(vault.id))
-      setNote(r.unchanged ? 'Renamed. The site was already up to date.' : 'Renamed and republished.')
-      setNewUrl(r.vaultUrl)
       await reload()
       setStage('done')
+      if (r.unchanged) { setNote('Renamed. The site was already up to date.'); setNewUrl(r.vaultUrl); return }
+      // the new address only works once GitHub has rebuilt the site: offer it then
+      setNote('Renamed and republished. Going live — GitHub usually takes under a minute…')
+      const ok = await waitUntilLive(r)
+      setNote(ok ? 'Renamed and republished. Live at' : 'Renamed and republished. GitHub is slow to update, so this may not work for a few minutes:')
+      setNewUrl(r.vaultUrl)
     } catch (e) {
       setErr((e as Error).message)
       setStage('ask')

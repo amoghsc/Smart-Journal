@@ -193,7 +193,11 @@ export async function publishedOthers(except: string): Promise<LandingVault[]> {
 }
 
 export interface GitHubStatus { configured: boolean; repo: string | null; branch: string; siteUrl: string | null }
-export interface GitHubResult { commit: string; unchanged: boolean; repo: string; slug: string; siteUrl: string; vaultUrl: string; commitUrl: string }
+export interface GitHubResult {
+  commit: string; unchanged: boolean; repo: string; slug: string; siteUrl: string; vaultUrl: string; commitUrl: string
+  /** The vault's home page as uploaded, to tell when GitHub starts serving it. */
+  home: string
+}
 
 /** Errors from the function carry a JSON body with a readable message. */
 async function fnError(error: unknown): Promise<Error> {
@@ -216,7 +220,25 @@ export async function publishToGitHub(plan: SitePlan, vault: Vault): Promise<Git
   const files = buildSite(plan, vault, await publishedOthers(vault.id))
   const { data, error } = await supabase.functions.invoke('nt-publish', { body: { vault_id: vault.id, files } })
   if (error) throw await fnError(error)
-  return data as GitHubResult
+  return { ...(data as Omit<GitHubResult, 'home'>), home: files[`${data.slug}/index.html`] ?? '' }
+}
+
+/**
+ * GitHub Pages takes a minute or so to rebuild after a publish, and its cache can serve a stale page (or a 404)
+ * meanwhile. Resolves true once the vault's home page served is the one just uploaded; false if that takes over
+ * `limitMs`. The query string skips GitHub's cache; its pages allow cross-origin reads.
+ */
+export async function waitUntilLive(result: GitHubResult, limitMs = 180_000, stop?: () => boolean): Promise<boolean> {
+  const until = Date.now() + limitMs
+  while (Date.now() < until) {
+    if (stop?.()) return false
+    try {
+      const res = await fetch(`${result.vaultUrl}?v=${Date.now()}`, { cache: 'no-store' })
+      if (res.ok && (await res.text()).trim() === result.home.trim()) return true
+    } catch { /* offline for a moment: keep trying */ }
+    await new Promise(r => setTimeout(r, 5000))
+  }
+  return false
 }
 
 /** Build the site and hand the browser a .zip download (this vault only). */

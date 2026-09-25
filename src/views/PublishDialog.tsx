@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Download, ExternalLink, GitBranch, Globe, ShieldCheck, Upload, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Download, ExternalLink, GitBranch, Globe, Loader2, ShieldCheck, Upload, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { downloadSite, githubStatus, planSite, publishToGitHub, vaultSlug, type GitHubResult, type GitHubStatus } from '../lib/publish'
+import { downloadSite, githubStatus, planSite, publishToGitHub, vaultSlug, waitUntilLive, type GitHubResult, type GitHubStatus } from '../lib/publish'
 import { isDailyTitle, prettyDate } from '../lib/links'
 import type { Vault } from '../lib/types'
 
@@ -30,6 +30,10 @@ export function PublishDialog({ vault, onClose }: Props) {
   const [ghErr, setGhErr] = useState<string | null>(null)
   const [busy, setBusy] = useState<'github' | 'zip' | null>(null)
   const [result, setResult] = useState<GitHubResult | null>(null)
+  // after a publish GitHub takes a minute to rebuild: the link is offered once the new page is being served
+  const [live, setLive] = useState<'waiting' | 'live' | 'slow' | null>(null)
+  const closed = useRef(false)
+  useEffect(() => () => { closed.current = true }, [])
   const [zipped, setZipped] = useState<number | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -49,7 +53,10 @@ export function PublishDialog({ vault, onClose }: Props) {
     setBusy('github'); setErr(null); setResult(null)
     try {
       await updateVault(vault.id, settings())
-      setResult(await publishToGitHub(plan, { ...vault, ...settings() }))
+      const r = await publishToGitHub(plan, { ...vault, ...settings() })
+      setResult(r)
+      setLive(r.unchanged ? 'live' : 'waiting')
+      if (!r.unchanged) waitUntilLive(r, 180_000, () => closed.current).then(ok => { if (!closed.current) setLive(ok ? 'live' : 'slow') })
       await reload()   // the publisher records the vault's folder and publish time
     } catch (e) { setErr((e as Error).message) } finally { setBusy(null) }
   }
@@ -131,7 +138,9 @@ export function PublishDialog({ vault, onClose }: Props) {
             {err && <span className="err-text">{err}</span>}
             {!err && result && (result.unchanged
               ? <span className="muted small">Nothing changed since the last publish.</span>
-              : <span className="pub-done">Published · <a href={result.commitUrl} target="_blank" rel="noopener">commit {result.commit.slice(0, 7)}</a> · <a href={result.vaultUrl} target="_blank" rel="noopener">view site <ExternalLink size={11} /></a></span>)}
+              : live === 'waiting'
+                ? <span className="pub-done"><Loader2 size={12} className="spin" /> Published · going live — GitHub usually takes under a minute…</span>
+                : <span className="pub-done">{live === 'slow' ? 'Published · GitHub is slow to update, the page may show the old version for a few minutes' : 'Live'} · <a href={result.commitUrl} target="_blank" rel="noopener">commit {result.commit.slice(0, 7)}</a> · <a href={result.vaultUrl} target="_blank" rel="noopener">view site <ExternalLink size={11} /></a></span>)}
             {!err && !result && zipped !== null && <span className="pub-done">Downloaded {zipped} files.</span>}
           </div>
           <div className="pub-actions">

@@ -8,14 +8,16 @@ import { supabase } from './supabase'
  */
 
 export type AiTaskId = 'synonyms' | 'grammar' | 'shorten' | 'summarise' | 'expand'
-  | 'formal' | 'friendly' | 'casual' | 'genz' | 'simpler' | 'funny' | 'emotional'
-  | 'elaborate' | 'metaphors'
+  | 'formal' | 'friendly' | 'genz' | 'simpler' | 'funny' | 'emotional' | 'sarcastic'
+  | 'translate' | 'elaborate' | 'metaphors' | 'story' | 'structure' | 'forAgainst'
 
 export interface AiTask {
   id: AiTaskId
   label: string
   /** Shown while it runs, e.g. "Fixing grammar…". */
   busy: string
+  /** What the result is, for the hover label on a version, e.g. "expanded text". */
+  result: string
   /**
    * replace: the result takes the selection's place. after: the result is added below it.
    * choose: the result is a list of options; picking one replaces the selection (keeping its formatting).
@@ -25,26 +27,65 @@ export interface AiTask {
   wordOnly?: boolean
   /** For 'after' results: a short italic label above them, so they don't run into the text before. */
   heading?: string
-  group: string
+  /** Menu section; sections are separated by a line. */
+  group: number
 }
 
-/** The menu, in order; groups become section headings. */
+/** The menu, in order. */
 export const AI_TASKS: AiTask[] = [
-  { id: 'synonyms', label: 'Similar words', busy: 'Finding similar words…', mode: 'choose', wordOnly: true, group: 'Word' },
-  { id: 'grammar', label: 'Fix grammar', busy: 'Fixing grammar…', mode: 'replace', group: 'Fix' },
-  { id: 'shorten', label: 'Make shorter', busy: 'Shortening…', mode: 'replace', group: 'Length' },
-  { id: 'summarise', label: 'Summarise', busy: 'Summarising…', mode: 'replace', group: 'Length' },
-  { id: 'expand', label: 'Expand', busy: 'Expanding…', mode: 'replace', group: 'Length' },
-  { id: 'formal', label: 'Formal', busy: 'Making it formal…', mode: 'replace', group: 'Tone' },
-  { id: 'friendly', label: 'Friendly', busy: 'Making it friendly…', mode: 'replace', group: 'Tone' },
-  { id: 'casual', label: 'Casual', busy: 'Making it casual…', mode: 'replace', group: 'Tone' },
-  { id: 'genz', label: 'Gen Z', busy: 'No cap, rewriting…', mode: 'replace', group: 'Tone' },
-  { id: 'simpler', label: 'Simpler language', busy: 'Simplifying…', mode: 'replace', group: 'Tone' },
-  { id: 'funny', label: 'Make it funny', busy: 'Adding humour…', mode: 'replace', group: 'Tone' },
-  { id: 'emotional', label: 'More emotional', busy: 'Adding feeling…', mode: 'replace', group: 'Tone' },
-  { id: 'elaborate', label: 'Elaborate this concept', busy: 'Elaborating…', mode: 'after', heading: 'Elaborated', group: 'Explain' },
-  { id: 'metaphors', label: 'Metaphors to explain it', busy: 'Finding metaphors…', mode: 'after', heading: 'Metaphors', group: 'Explain' },
+  { id: 'synonyms', label: 'Similar Words', busy: 'Finding similar words…', result: 'similar words', mode: 'choose', wordOnly: true, group: 0 },
+  { id: 'grammar', label: 'Fix Grammar', busy: 'Fixing grammar…', result: 'grammar fixed', mode: 'replace', group: 1 },
+  { id: 'shorten', label: 'Shorten', busy: 'Shortening…', result: 'shortened text', mode: 'replace', group: 2 },
+  { id: 'expand', label: 'Expand', busy: 'Expanding…', result: 'expanded text', mode: 'replace', group: 2 },
+  { id: 'summarise', label: 'Summarise', busy: 'Summarising…', result: 'summary', mode: 'replace', group: 2 },
+  { id: 'friendly', label: 'Friendly Tone', busy: 'Making it friendly…', result: 'friendly tone', mode: 'replace', group: 3 },
+  { id: 'formal', label: 'Formal Tone', busy: 'Making it formal…', result: 'formal tone', mode: 'replace', group: 3 },
+  { id: 'genz', label: 'Gen-z speak', busy: 'No cap, rewriting…', result: 'Gen-z speak', mode: 'replace', group: 3 },
+  { id: 'simpler', label: 'Simpler Language', busy: 'Simplifying…', result: 'simpler language', mode: 'replace', group: 3 },
+  { id: 'funny', label: 'Make it Funny', busy: 'Adding humour…', result: 'funny version', mode: 'replace', group: 4 },
+  { id: 'emotional', label: 'Make it Emotional', busy: 'Adding feeling…', result: 'emotional version', mode: 'replace', group: 4 },
+  { id: 'sarcastic', label: 'Make it Sarcastic', busy: 'Oh, great, rewriting…', result: 'sarcastic version', mode: 'replace', group: 4 },
+  { id: 'translate', label: 'Translate', busy: 'Translating…', result: 'translation', mode: 'replace', group: 5 },
+  { id: 'elaborate', label: 'Elaborate Idea', busy: 'Elaborating…', result: 'elaboration', mode: 'after', heading: 'Elaborated', group: 5 },
+  { id: 'metaphors', label: 'Suggest Metaphors', busy: 'Finding metaphors…', result: 'metaphors', mode: 'after', heading: 'Metaphors', group: 5 },
+  { id: 'story', label: 'Suggest a story', busy: 'Writing a story…', result: 'story', mode: 'after', heading: 'A story', group: 5 },
+  { id: 'structure', label: 'Create Structure', busy: 'Outlining…', result: 'structure', mode: 'after', heading: 'Structure', group: 5 },
+  { id: 'forAgainst', label: 'For & Against', busy: 'Weighing both sides…', result: 'for & against', mode: 'after', heading: 'For & against', group: 5 },
 ]
+
+// ---- languages ---------------------------------------------------------------------------------------
+
+export type Lang = 'en' | 'mr' | 'hi'
+/** Translation targets, named in their own script. */
+export const LANGS: Record<Lang, string> = { en: 'English', mr: 'मराठी', hi: 'हिंदी' }
+
+// very common words that only one of the two languages uses (both are written in Devanagari)
+const MARATHI = new Set('आहे आहेत आणि नाही नाहीत मी मला माझा माझी माझे तू तुला तुझा आम्ही तुम्ही आपण होते होता होती पण काय कसे कसा केले केला झाले झाला झाली आता खूप म्हणून असे असं नको कधी त्याला तिला त्यांना आहोत'.split(' '))
+const HINDI = new Set('है हैं और नहीं मैं मुझे मेरा मेरी मेरे तुम था थी थे में से को यह वह क्या कैसे किया हुआ हुई अब बहुत हम लेकिन भी कि गया गई रहा रही हूँ हूं'.split(' '))
+
+/**
+ * The language most of `text` is in: English for Latin script, Marathi or Hindi for Devanagari (told apart by
+ * common words and ळ, which Hindi doesn't use). Mixed text goes by whichever script has more letters. Null if neither.
+ */
+export function detectLanguage(text: string): Lang | null {
+  const clean = text.replace(/\]\([^)]*\)/g, ' ')                // a web link's address isn't language
+  const deva = (clean.match(/[\u0900-\u097F]/g) ?? []).length
+  const latin = (clean.match(/[A-Za-z]/g) ?? []).length
+  if (!deva && !latin) return null
+  if (latin > deva) return 'en'
+  let mr = (clean.match(/ळ/g) ?? []).length * 0.5, hi = 0
+  // । and ॥ end words too
+  for (const w of clean.split(/[^\u0900-\u0963\u0966-\u097F]+/)) { if (MARATHI.has(w)) mr++; if (HINDI.has(w)) hi++ }
+  return hi > mr ? 'hi' : 'mr'
+}
+
+/** The two languages a passage can be translated into: the ones it isn't in. */
+export function translateTargets(from: Lang | null): Lang[] {
+  return (['en', 'mr', 'hi'] as Lang[]).filter(l => l !== from).slice(0, 2)
+}
+
+/** Extra details a task needs: the passage's main language, and for translate the target. */
+export interface AiOpts { lang?: Lang | null; target?: Lang }
 
 async function readError(error: unknown): Promise<Error> {
   const ctx = (error as { context?: Response }).context
@@ -64,15 +105,15 @@ export function aiAvailable(): Promise<boolean> {
 }
 
 /** Two versions to choose between (one if both came out the same). */
-export async function runAiOptions(task: AiTaskId, text: string): Promise<string[]> {
-  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, variants: 2 } })
+export async function runAiOptions(task: AiTaskId, text: string, opts: AiOpts = {}): Promise<string[]> {
+  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, variants: 2, ...opts } })
   if (error) throw await readError(error)
   const texts = (data?.texts as string[] | undefined) ?? (data?.text ? [data.text as string] : [])
   return texts.filter(t => t && t.trim())
 }
 
-export async function runAi(task: AiTaskId, text: string): Promise<string> {
-  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text } })
+export async function runAi(task: AiTaskId, text: string, opts: AiOpts = {}): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, ...opts } })
   if (error) throw await readError(error)
   return (data?.text as string) ?? ''
 }
@@ -141,10 +182,22 @@ export function textToContent(raw: string, allowInline = true): string {
     return inline(blocks[0].replace(/\s*\n\s*/g, ' '))
   }
   return blocks.map(b => {
+    // a block can mix a plain line with the list under it ("For" then "- " points)
     const lines = b.split('\n').map(l => l.trim()).filter(Boolean)
-    if (lines.every(isBullet)) return `<ul>${lines.map(l => `<li><p>${inline(l.replace(/^[-*•]\s+/, ''))}</p></li>`).join('')}</ul>`
-    if (lines.every(isNumbered)) return `<ol>${lines.map(l => `<li><p>${inline(l.replace(/^\d+[.)]\s+/, ''))}</p></li>`).join('')}</ol>`
-    return `<p>${inline(lines.join(' '))}</p>`
+    let html = '', run: string[] = [], kind: 'ul' | 'ol' | 'p' | null = null
+    const flush = () => {
+      if (kind === 'ul') html += `<ul>${run.map(l => `<li><p>${inline(l.replace(/^[-*•]\s+/, ''))}</p></li>`).join('')}</ul>`
+      else if (kind === 'ol') html += `<ol>${run.map(l => `<li><p>${inline(l.replace(/^\d+[.)]\s+/, ''))}</p></li>`).join('')}</ol>`
+      else if (run.length) html += `<p>${inline(run.join(' '))}</p>`
+      run = []
+    }
+    for (const l of lines) {
+      const k = isBullet(l) ? 'ul' : isNumbered(l) ? 'ol' : 'p'
+      if (k !== kind) { flush(); kind = k }
+      run.push(l)
+    }
+    flush()
+    return html
   }).join('')
 }
 

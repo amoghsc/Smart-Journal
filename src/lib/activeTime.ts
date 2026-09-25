@@ -31,12 +31,14 @@ export function useUnsavedSeconds(id: string | undefined): number {
   )
 }
 
-/** "12 min", "1h 05m"; empty under a minute. */
+/** "12 mins.", "3 hrs. 34 mins."; empty under a minute. */
 export function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  if (m < 1) return ''
-  if (m < 60) return `${m} min`
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+  const total = Math.floor(seconds / 60)
+  if (total < 1) return ''
+  const h = Math.floor(total / 60), m = total % 60
+  const hrs = h ? `${h} ${h === 1 ? 'hr.' : 'hrs.'}` : ''
+  const mins = m ? `${m} ${m === 1 ? 'min.' : 'mins.'}` : ''
+  return [hrs, mins].filter(Boolean).join(' ')
 }
 
 /** Start counting. `visible` returns the ids of saved notes on screen; `save` adds seconds to a note. Returns a stop function. */

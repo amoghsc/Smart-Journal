@@ -161,7 +161,9 @@ p.small { margin: 0; line-height: 1.45; }
 .date-hidden { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1; }
 .pane-actions { display: flex; align-items: center; gap: 2px; flex: none; opacity: 0.6; }
 @media (hover: hover) { .pane:hover .pane-actions { opacity: 1; } }
-.wc { flex: none; height: 30px; display: inline-flex; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 12px; }
+/* title with a quiet line under it: word count and time spent */
+.pane-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pane-meta { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; position: relative; }
 
 /* editor */
@@ -395,8 +397,6 @@ p.small { margin: 0; line-height: 1.45; }
 /* strikethrough: crossed out and faded 30% towards the background, in both themes */
 .note s { text-decoration: line-through; color: color-mix(in srgb, currentColor 70%, var(--bg)); }
 
-/* time spent, after the word count */
-.wc-time { color: var(--muted); }
 
 /* AI row in the selection menu */
 .ai-btn { color: #8b5cf6 !important; }
@@ -416,7 +416,9 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-group { display: flex; flex-direction: column; }
 .bubble { max-width: calc(100vw - 16px); }
 .ai-group + .ai-group { border-top: 1px solid var(--line); margin-top: 3px; padding-top: 3px; }
-.ai-group-name { padding: 3px 8px 1px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.bubble .ai-item .ai-chev { color: var(--muted); transition: transform .15s ease; }
+.bubble .ai-item.open .ai-chev { transform: rotate(90deg); }
+.bubble .ai-item.ai-sub { padding-left: 22px !important; }
 .bubble .ai-item { width: 100% !important; height: auto !important; min-height: 28px; justify-content: space-between !important; gap: 10px; padding: 4px 8px !important; font-size: 13.5px; color: var(--fg) !important; text-align: left; }
 .bubble .ai-item:hover { background: var(--bg3); }
 .ai-note { font-size: 11px; color: var(--muted); font-weight: 400; }
@@ -443,19 +445,36 @@ p.small { margin: 0; line-height: 1.45; }
 :root[data-anim="off"] .ai-fresh { animation: ai-fresh-fade 20s linear forwards !important; }
 .fresh-pop button { color: #8b5cf6; }
 
-/* choosing between two AI versions: a panel between paragraphs, clearly apart from the note's own text */
-.ai-compare-slot { display: block; margin: 10px 0 14px; }
-.ai-compare { border: 1px solid rgba(139, 92, 246, 0.35); background: rgba(139, 92, 246, 0.06); border-radius: 10px; padding: 8px 10px 10px; animation: fade-in .2s ease; }
-.ai-compare-head { display: flex; align-items: center; gap: 7px; color: #8b5cf6; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
-.ai-compare-head span { flex: 1; min-width: 0; }
-.ai-compare-cancel { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--muted); padding: 3px 8px; border-radius: 6px; }
+/* choosing between AI versions: they sit in the note like paragraphs, tinted purple; click one to keep it */
+.ai-compare-slot { display: block; margin: 4px 0 10px; }
+.ai-compare { position: relative; display: flex; flex-direction: column; gap: 8px; animation: fade-in .25s ease; }
+.ai-option { position: relative; margin: 0 -10px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+  background: rgba(139, 92, 246, 0.07); transition: background-color .2s ease, box-shadow .2s ease, opacity .25s ease, max-height .28s ease, padding .28s ease, margin .28s ease; }
+.ai-option:hover, .ai-option:focus-visible { background: rgba(139, 92, 246, 0.12); box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.14); outline: none; }
+.ai-option-body.note { padding: 0; flex: none; font-size: inherit; line-height: 1.6; }
+.ai-option-body > :last-child { margin-bottom: 0; }
+/* what it is, shown on hover: "AI: expanded text · Option 1" */
+/* it sits on the option's top edge, so it doesn't cover the words */
+.ai-option-tip { position: absolute; top: -9px; right: 10px; z-index: 1; padding: 1px 7px; border-radius: 9px; font-size: 11px; line-height: 16px; white-space: nowrap;
+  color: #8b5cf6; background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,0.08); opacity: 0; transform: translateY(2px); transition: opacity .15s ease, transform .15s ease; pointer-events: none; }
+.ai-option:hover .ai-option-tip, .ai-option:focus-visible .ai-option-tip { opacity: 1; transform: none; }
+.ai-compare.picking .ai-option { cursor: default; }
+.ai-compare.picking .ai-option-tip { opacity: 0; }
+.ai-option.chosen { background: rgba(139, 92, 246, 0.16); box-shadow: none; }
+.ai-option.gone { opacity: 0; padding-top: 0; padding-bottom: 0; margin-top: -8px; overflow: hidden; }
+/* keep my text: a quiet × beside the versions (Esc does the same) */
+.ai-compare-cancel { position: absolute; top: 2px; right: -34px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--muted); opacity: 0.45; transition: opacity .15s ease; }
+.ai-compare:hover .ai-compare-cancel, .ai-compare-cancel:focus-visible { opacity: 1; }
 .ai-compare-cancel:hover { background: var(--bg3); color: var(--fg); }
-.ai-compare-options { display: flex; flex-direction: column; gap: 8px; }
-/* each option spans the note's width, one above the other, reading like a paragraph */
-.ai-option { display: flex; flex-direction: column; gap: 6px; background: var(--bg); border-left: 3px solid rgba(139, 92, 246, 0.55); border-radius: 0 6px 6px 0; padding: 8px 12px 10px; min-width: 0; }
-.ai-option:hover { border-left-color: #8b5cf6; }
-.ai-option-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.ai-option-body.note { padding: 0; flex: 1; font-size: inherit; line-height: 1.6; }
-.ai-option-use { align-self: flex-start; background: #8b5cf6 !important; }
+.ai-compare.picking .ai-compare-cancel { opacity: 0; pointer-events: none; }
+/* no room beside the text with three notes open, or on a phone: it sits under the versions instead */
+.panes[data-count="3"] .ai-compare-cancel { position: static; align-self: flex-end; margin-top: -2px; }
+@media (max-width: 800px) { .ai-compare-cancel { position: static; align-self: flex-end; margin-top: -2px; } }
+:root[data-theme="dark"] .ai-option { background: rgba(167, 139, 250, 0.11); }
+:root[data-theme="dark"] .ai-option:hover, :root[data-theme="dark"] .ai-option.chosen { background: rgba(167, 139, 250, 0.2); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ai-option { background: rgba(167, 139, 250, 0.11); }
+  :root:not([data-theme="light"]) .ai-option:hover, :root:not([data-theme="light"]) .ai-option.chosen { background: rgba(167, 139, 250, 0.2); }
+}
 /* the text an option would replace */
 .ai-source { background: rgba(139, 92, 246, 0.10); text-decoration: underline dashed rgba(139, 92, 246, 0.7); text-underline-offset: 4px; }

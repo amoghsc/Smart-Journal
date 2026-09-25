@@ -13,11 +13,25 @@ const MAX_CHARS = 40_000
 
 // Shared by every task. The text arrives with light markup that must survive the rewrite.
 const COMMON =
-  ' The passage is from the user\'s own notes. Write in the same language as the passage (Marathi stays Marathi, Hindi stays Hindi). ' +
+  ' The passage is from the user\'s own notes. ' +
   'The passage may contain markup: lines starting with "- " are bullets and "1. " numbered items (keep them as lists when the result is a list), ' +
   '[[Title]] is a link to another note and [words](https://…) a link to a website — keep every such link exactly as written, including the brackets. ' +
   'Output only the resulting text: plain text with blank lines between paragraphs, no headings, no bold or italics, no quotation marks around it, ' +
   'and no preamble or comment such as "Here is…".'
+
+const LANG_NAMES: Record<string, string> = { en: 'English', mr: 'Marathi', hi: 'Hindi' }
+
+/**
+ * The result stays in the passage's language. The app works out which language most of the passage is in
+ * (`lang`); for Marathi and Hindi it says so, since the two share a script and mixed text can pull the model
+ * towards English. Latin script gets no hint: it may be romanised Hindi or Marathi, which should stay that way.
+ */
+function languageRule(lang: unknown): string {
+  const name = lang === 'mr' || lang === 'hi' ? LANG_NAMES[lang] : null
+  return ' Write the result in the same language and script as the passage. If the passage mixes languages, write the whole result in the one ' +
+    'that makes up most of it, keeping a word from the other only where the author would naturally use it (a name or a common loanword).' +
+    (name ? ` Most of this passage is ${name}, so write in ${name}, in Devanagari script.` : '')
+}
 
 const TASKS: Record<string, string> = {
   grammar:
@@ -55,6 +69,23 @@ const TASKS: Record<string, string> = {
   emotional:
     'Rewrite the passage to be more emotional: bring out the feelings behind it with vivid, heartfelt language. ' +
     'Keep the meaning, the facts and the author\'s first person. Do not invent events or people.',
+  sarcastic:
+    'Rewrite the passage with a sarcastic, dry, tongue-in-cheek tone — irony and understatement that make the point land — while keeping its meaning and every point. ' +
+    'Keep the author\'s first person. Aim the sarcasm at the situation, never mean or insulting towards people.',
+  translate:
+    'Translate the passage into {target}. Make it read naturally, the way a fluent native speaker would write it — not word for word — keeping the meaning, ' +
+    'tone, every point, the structure and the author\'s first person. Keep names as they are, written in the target script where that is natural.',
+  story:
+    'Write a short story (about 150 to 250 words, 2 to 4 short paragraphs) that illustrates the key points of the passage: a concrete character and a small, ' +
+    'everyday situation that make the ideas vivid, so the point lands without a lecture. It is an illustration — do not present it as something that happened ' +
+    'to the author, do not retell the passage, and do not add a moral at the end.',
+  structure:
+    'Suggest a structure for a section about what the passage covers: 5 to 7 "- " lines in a sensible order, each naming one point the section should cover ' +
+    '— a few words, optionally followed by " — " and a one-line note on what to say. Build on the passage; do not rewrite it.',
+  forAgainst:
+    'Weigh the argument the passage makes. Output two parts separated by a blank line. Part one: a line with just the word "For" (in the passage\'s language), ' +
+    'then 2 to 5 "- " lines, each one point supporting the argument. Part two: a line with just the word "Against" (in the passage\'s language), then 2 to 5 "- " lines, ' +
+    'each one point opposing it. One or two sentences per point; be fair to both sides; add no facts about the author\'s life.',
   synonyms:
     'The input gives one word and the sentence it appears in. List up to 8 words or short phrases with a similar meaning that would fit in its place in that sentence, ' +
     'in the same language and script as the word, matching its form (tense, number, gender, case). Most natural first. ' +
@@ -71,7 +102,7 @@ const TASKS: Record<string, string> = {
 const WORD_TASKS = new Set(['synonyms'])
 
 // how adventurous the wording may be: cautious for corrections, freer for creative rewrites
-const TEMPERATURE: Record<string, number> = { formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
+const TEMPERATURE: Record<string, number> = { sarcastic: 0.9, translate: 0.2, story: 0.9, structure: 0.5, forAgainst: 0.6, formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''
@@ -152,8 +183,16 @@ Deno.serve(async (req: Request) => {
     if (!geminiKey) throw new HttpError(412, 'AI isn’t set up yet')
 
     // word-level tasks have their own output format; the shared rules are for rewriting passages
-    const system = TASKS[body.task] ? TASKS[body.task] + (WORD_TASKS.has(body.task) ? '' : COMMON) : undefined
-    if (!system) throw new HttpError(400, 'Unknown task')
+    const prompt = Object.hasOwn(TASKS, body.task) ? TASKS[body.task] : undefined
+    if (!prompt) throw new HttpError(400, 'Unknown task')
+    let system: string
+    if (body.task === 'translate') {
+      const target = Object.hasOwn(LANG_NAMES, body.target) ? LANG_NAMES[body.target] : null
+      if (!target) throw new HttpError(400, 'Pick a language to translate into')
+      system = prompt.replace('{target}', target) + COMMON + ` Write the whole result in ${target}${target === 'English' ? '' : ', in Devanagari script'}.`
+    } else {
+      system = WORD_TASKS.has(body.task) ? prompt : prompt + COMMON + languageRule(body.lang)
+    }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (!text) throw new HttpError(400, 'Select some text first')
     if (text.length > MAX_CHARS) throw new HttpError(413, 'That selection is too long — pick a shorter passage')

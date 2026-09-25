@@ -151,6 +151,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   return (
     <div ref={paneRef} className={'pane' + (closing ? ' closing' : '')}>
       <div className="pane-head">
+        <div className="pane-title">
         {daily ? (
           <div className="daily-nav">
             <h1>{prettyDate(title)}</h1>
@@ -168,9 +169,13 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
             }}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } if (e.key === 'Escape') { setTitleText(title); e.currentTarget.blur() } }} />
         )}
+          <div className="pane-meta">
+            <span title="Words in this note">{words} {words === 1 ? 'word' : 'words'}</span>
+            <NoteTime saved={page?.active_seconds ?? 0} id={page?.local ? undefined : page?.id} />
+          </div>
+        </div>
         <input ref={dateInput} type="date" className="date-hidden" tabIndex={-1} aria-hidden
           onChange={e => { const cb = datePending.current; datePending.current = null; cb?.(e.target.value || null) }} />
-        <span className="wc" title="Words in this note">{words} {words === 1 ? 'word' : 'words'}<NoteTime saved={page?.active_seconds ?? 0} id={page?.local ? undefined : page?.id} /></span>
         <div className="pane-actions">
           {page && vault?.kind === 'public' && (
             <button className={'icon-btn' + (page.draft ? ' on' : '')} title={page.draft ? 'Held back — click to include when publishing' : 'Included when publishing — click to hold back'}
@@ -219,5 +224,5 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
 function NoteTime({ saved, id }: { saved: number; id: string | undefined }) {
   const unsaved = useUnsavedSeconds(id)
   const text = formatDuration(saved + unsaved)
-  return text ? <span className="wc-time" title="Time spent on this note while you were active"> · {text}</span> : null
+  return text ? <span title="Time spent on this note while you were active"> · Working on for: {text}</span> : null
 }

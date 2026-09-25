@@ -50,7 +50,6 @@ function card(score: Score | undefined, show: boolean): HTMLElement {
     row('Meaning', score.meaning != null ? pct(score.meaning) : score.stale ? 'checking…' : 'off'),
   )
   const notes = [
-    score.seeded ? 'Counts only what the AI changed in your text.' : '',
     score.meaning != null && score.stale ? 'Meaning is being re-checked.' : '',
     score.meaning == null && !score.stale ? 'Meaning check is off in settings.' : '',
   ].filter(Boolean)

@@ -485,6 +485,8 @@ p.small { margin: 0; line-height: 1.45; }
 /* while versions are showing the note is locked: only the versions (and their Undo) respond */
 .note.ai-locked { cursor: default; user-select: none; -webkit-user-select: none; }
 .note.ai-locked *:not(.ai-compare-slot, .ai-compare-slot *) { pointer-events: none; }
+/* pointer-events is inherited: switch it back on for the versions, or they'd be unclickable too */
+.note.ai-locked .ai-compare-slot { pointer-events: auto; }
 
 /* Undo badge: in the right margin beside the first line of text the AI just wrote; it fades with the highlight */
 .ai-undo-layer { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; z-index: 5; }
@@ -497,13 +499,23 @@ p.small { margin: 0; line-height: 1.45; }
 /* AI-written text: a thin purple rule beside lines of it, a dotted underline where it's part of a line, and ✦ with its
    AI share in the margin where each piece starts (hover for the breakdown) */
 .note .ai-block, .note .ai-part { position: relative; }
-.note .ai-block::before { content: ''; position: absolute; left: -10px; top: -0.2em; bottom: -0.2em; width: 2px; border-radius: 1px; background: rgba(139, 92, 246, 0.35); }
-.note li > .ai-block::before { left: calc(-1.25em - 6px); }
+/* one straight rule at the note's left edge, whatever the indent: --ai-indent = how far this line sits in from it
+   (each list level indents 1.25em). Registered as a length so it's worked out once, at the line, in the note's font
+   size — the small score badge inherits the same distance. Each line's piece stops 2px short of the next line. */
+@property --ai-indent { syntax: '<length>'; inherits: true; initial-value: 0px; }
+.note li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 1); }
+.note :is(ul, ol) :is(ul, ol) li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 2); }
+.note :is(ul, ol) :is(ul, ol) :is(ul, ol) li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 3); }
+.note :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 4); }
+.note :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 5); }
+.note :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) li > :is(.ai-block, .ai-part) { --ai-indent: calc(1.25em * 6); }
+.note .ai-block::before { content: ''; position: absolute; left: calc(-1 * var(--ai-indent) - 10px); top: 0; bottom: calc(-0.4em + 2px);
+  width: 2px; border-radius: 1px; background: rgba(139, 92, 246, 0.35); }
+.note li > .ai-block::before { bottom: 2px; }
 .note .ai-part .ai-text { text-decoration: underline dotted rgba(139, 92, 246, 0.5); text-underline-offset: 4px; }
-.ai-score { position: absolute; right: calc(100% + 14px); top: 0.3em; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+.ai-score { position: absolute; right: calc(100% + var(--ai-indent) + 14px); top: 0.3em; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
   white-space: nowrap; font-size: 10px; line-height: 1.1; font-variant-numeric: tabular-nums; color: rgba(139, 92, 246, 0.75); user-select: none; cursor: default; }
 .ai-score .ai-star { font-size: 10px; }
-.note li > * > .ai-score { right: calc(100% + 1.25em + 10px); }
 .ai-score:hover { color: #8b5cf6; }
 /* hover card: overall score on top (bold), a grey rule, then the three parts; labels left, numbers right */
 .ai-card { display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: 236px; padding: 8px 12px 9px; border-radius: 8px;
@@ -519,12 +531,12 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-card-rule { height: 1px; background: var(--line); margin: 4px 0 3px; }
 .ai-card-note { margin-top: 5px; font-size: 11px; color: var(--muted); line-height: 1.35; }
 /* three notes side by side leave a narrower margin */
-.panes[data-count="3"] .note .ai-block::before { left: -8px; }
-.panes[data-count="3"] .ai-score { right: calc(100% + 11px); font-size: 9.5px; }
+.panes[data-count="3"] .note .ai-block::before { left: calc(-1 * var(--ai-indent) - 8px); }
+.panes[data-count="3"] .ai-score { right: calc(100% + var(--ai-indent) + 11px); font-size: 9.5px; }
 /* phones: no room in the margin, so the score sits at the line's top-right instead */
 @media (max-width: 800px) {
-  .note .ai-block::before { left: -8px; }
-  .ai-score, .note li > * > .ai-score { right: 0; top: -0.95em; flex-direction: row; gap: 3px; padding: 0 5px; border-radius: 8px; background: var(--bg); line-height: 1.5; }
+  .note .ai-block::before { left: calc(-1 * var(--ai-indent) - 8px); }
+  .ai-score { right: 0; top: -0.95em; flex-direction: row; gap: 3px; padding: 0 5px; border-radius: 8px; background: var(--bg); line-height: 1.5; }
   .ai-card { left: auto; right: 0; }
 }
 .ai-option-body .ai-block::before, .ai-option-body .ai-score { display: none; }

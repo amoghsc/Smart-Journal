@@ -9,7 +9,7 @@ import { supabase } from './supabase'
 
 export type AiTaskId = 'synonyms' | 'grammar' | 'shorten' | 'summarise' | 'expand'
   | 'formal' | 'friendly' | 'genz' | 'simpler' | 'funny' | 'emotional' | 'sarcastic'
-  | 'translate' | 'elaborate' | 'metaphors' | 'story' | 'structure' | 'forAgainst'
+  | 'translate' | 'elaborate' | 'metaphors' | 'examples' | 'story' | 'structure' | 'forAgainst'
 
 export interface AiTask {
   id: AiTaskId
@@ -48,6 +48,7 @@ export const AI_TASKS: AiTask[] = [
   { id: 'translate', label: 'Translate', busy: 'Translating…', result: 'translation', mode: 'replace', group: 5 },
   { id: 'elaborate', label: 'Elaborate Idea', busy: 'Elaborating…', result: 'elaboration', mode: 'after', heading: 'Elaborated', group: 5 },
   { id: 'metaphors', label: 'Suggest Metaphors', busy: 'Finding metaphors…', result: 'metaphors', mode: 'after', heading: 'Metaphors', group: 5 },
+  { id: 'examples', label: 'Suggest examples', busy: 'Finding examples…', result: 'examples', mode: 'after', heading: 'Examples', group: 5 },
   { id: 'story', label: 'Suggest a story', busy: 'Writing a story…', result: 'story', mode: 'after', heading: 'A story', group: 5 },
   { id: 'structure', label: 'Create Structure', busy: 'Outlining…', result: 'structure', mode: 'after', heading: 'Structure', group: 5 },
   { id: 'forAgainst', label: 'For & Against', busy: 'Weighing both sides…', result: 'for & against', mode: 'after', heading: 'For & against', group: 5 },

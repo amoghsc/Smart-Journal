@@ -90,6 +90,10 @@ const TASKS: Record<string, string> = {
     'Weigh the argument the passage makes. Output two parts separated by a blank line. Part one: a line with just the word "For" (in the passage\'s language), ' +
     'then 2 to 5 "- " lines, each one point supporting the argument. Part two: a line with just the word "Against" (in the passage\'s language), then 2 to 5 "- " lines, ' +
     'each one point opposing it. One or two sentences per point; be fair to both sides; add no facts about the author\'s life.',
+  examples:
+    'Give 5 examples that illustrate the key ideas in the passage. Output exactly 5 "- " lines, one example per line: ' +
+    'each a simple, concrete, everyday one-liner of at most about 20 words. Cover different ideas or angles rather than repeating one. ' +
+    'Do not repeat or rewrite the passage.',
   synonyms:
     'The input gives one word and the sentence it appears in. List up to 8 words or short phrases with a similar meaning that would fit in its place in that sentence, ' +
     'in the same language and script as the word, matching its form (tense, number, gender, case). Most natural first. ' +
@@ -106,7 +110,7 @@ const TASKS: Record<string, string> = {
 const WORD_TASKS = new Set(['synonyms'])
 
 // how adventurous the wording may be: cautious for corrections, freer for creative rewrites
-const TEMPERATURE: Record<string, number> = { sarcastic: 0.9, translate: 0.2, story: 0.9, structure: 0.5, forAgainst: 0.6, formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
+const TEMPERATURE: Record<string, number> = { examples: 0.8, sarcastic: 0.9, translate: 0.2, story: 0.9, structure: 0.5, forAgainst: 0.6, formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? ''

@@ -13,6 +13,8 @@ interface Store {
   /** Signed in through a password-reset link: a new password is needed before anything else. */
   recovering: boolean
   endRecovery: () => void
+  /** May publish to the GitHub garden (only its owner). */
+  canPublish: boolean
   /** Every page in every vault. */
   allPages: Page[]
   /** Pages in the current vault. */
@@ -66,6 +68,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
   const [recovering, setRecovering] = useState(openedFromReset)
   const endRecovery = useCallback(() => setRecovering(false), [])
+  const [canPublish, setCanPublish] = useState(false)
+  const seeding = useRef(false)
   const [allPages, setAllPages] = useState<Page[]>([])
   const [vaults, setVaults] = useState<Vault[]>([])
   const [vaultId, setVaultId] = useState<string | null>(() => localStorage.getItem('vault'))
@@ -89,7 +93,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ])
     if (v.error) { console.error(v.error); return }
     if (p.error) { console.error(p.error); return }
-    setVaults((v.data ?? []) as Vault[])
+    let vs = (v.data ?? []) as Vault[]
+    if (!vs.length && !seeding.current) {
+      // a new account: start it off with its own private journal
+      seeding.current = true
+      const first: Vault = {
+        id: crypto.randomUUID(), name: 'Journal', kind: 'private',
+        site_title: null, site_description: null, site_author: null, site_url: null, sort_order: 0, created_at: new Date().toISOString(),
+      }
+      const { error } = await supabase.from('nt_vaults').insert(first)
+      seeding.current = false
+      if (error) console.error('could not create a first vault', error); else vs = [first]
+    }
+    setVaults(vs)
     const rows = (p.data ?? []) as Page[]
     // keep local versions of pages that still have a pending save
     const merged = rows.map(r => (timers.current.has(r.id) || inflight.current.has(r.id)) ? latest.current.get(r.id) ?? r : r)
@@ -99,8 +115,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!session) { setAllPages([]); setVaults([]); return }
+    if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); return }
     reload()
+    supabase.from('nt_members').select('can_publish').maybeSingle().then(({ data }) => setCanPublish(!!data?.can_publish))
     const onVis = () => { if (document.visibilityState === 'visible') reload(); else flushAll() }
     document.addEventListener('visibilitychange', onVis)
     window.addEventListener('pagehide', flushAll)
@@ -396,7 +413,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value: Store = {
-    session, ready, recovering, endRecovery, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
+    session, ready, recovering, endRecovery, canPublish, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }

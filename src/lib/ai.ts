@@ -95,13 +95,22 @@ async function readError(error: unknown): Promise<Error> {
   return error instanceof Error ? error : new Error(String(error))
 }
 
-let configured: Promise<boolean> | null = null
-/** Is a Gemini key set on the server? Asked once per session. */
-export function aiAvailable(): Promise<boolean> {
-  configured ??= supabase.functions.invoke('nt-ai', { body: { action: 'status' } })
-    .then(({ data, error }) => !error && !!data?.configured)
-    .catch(() => false)
-  return configured
+/** on: ready. unset: no Gemini key on the server yet. denied: this account isn't one of the people allowed to use it. */
+export type AiStatus = 'on' | 'unset' | 'denied'
+
+let status: Promise<AiStatus> | null = null
+// asked once per sign-in (a different account may have different access)
+supabase.auth.onAuthStateChange(e => { if (e === 'SIGNED_IN' || e === 'SIGNED_OUT') status = null })
+
+/** Can this account use the AI tools? */
+export function aiStatus(): Promise<AiStatus> {
+  status ??= supabase.functions.invoke('nt-ai', { body: { action: 'status' } })
+    .then(async ({ data, error }): Promise<AiStatus> => {
+      if (error) return (error as { context?: Response }).context?.status === 403 ? 'denied' : 'unset'
+      return data?.configured ? 'on' : 'unset'
+    })
+    .catch((): AiStatus => 'unset')
+  return status
 }
 
 /** Two versions to choose between (one if both came out the same). */

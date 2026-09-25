@@ -6,7 +6,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { PluginKey, Selection } from '@tiptap/pm/state'
 import type { Fragment, Slice } from '@tiptap/pm/model'
 import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { AI_TASKS, LANGS, aiAvailable, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
+import { AI_TASKS, LANGS, aiStatus, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
@@ -113,6 +113,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // AI tools (✨): a row in the selection menu; the request runs on the server
   const [aiMode, setAiMode] = useState(false)
+  // accounts that aren't allowed the AI tools don't see ✨ at all
+  const [aiAllowed, setAiAllowed] = useState(true)
+  useEffect(() => { aiStatus().then(s => setAiAllowed(s !== 'denied')) }, [])
   // Translate › opens a small menu to its right; `translateAt` is where
   const [translateAt, setTranslateAt] = useState<{ left: number; top: number } | null>(null)
   const translateTimer = useRef<number | null>(null)
@@ -361,7 +364,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
    */
   const runTask = async (task: AiTask, target?: Lang) => {
     if (!editor || aiBusy) return
-    if (!(await aiAvailable())) { toast('AI isn’t set up yet', 'Add GEMINI_API_KEY to the Supabase function secrets'); return }
+    const ai = await aiStatus()
+    if (ai === 'denied') { toast('AI isn’t turned on for your account'); return }
+    if (ai !== 'on') { toast('AI isn’t set up yet', 'Add GEMINI_API_KEY to the Supabase function secrets'); return }
     const { from, to } = editor.state.selection
     const word = singleWord(editor.state.doc, from, to)
     if (task.wordOnly && !word) return
@@ -584,8 +589,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               <button className={active?.strike ? 'on' : ''} title="Strikethrough (⌘⇧S)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
               <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
-              <span className="bubble-sep" />
-              <button className="ai-btn" title="AI" onMouseDown={keep} onClick={() => setAiMode(true)}><Sparkles size={15} /></button>
+              {aiAllowed && <>
+                <span className="bubble-sep" />
+                <button className="ai-btn" title="AI" onMouseDown={keep} onClick={() => setAiMode(true)}><Sparkles size={15} /></button>
+              </>}
               {comments && <>
                 <span className="bubble-sep" />
                 <button title="Comment on this text" onMouseDown={keep} onClick={addComment}><MessageSquarePlus size={15} /></button>

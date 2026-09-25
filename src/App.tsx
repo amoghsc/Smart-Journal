@@ -39,7 +39,7 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime } = useStore()
+  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
   // a fresh start opens today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
   const [panes, setPanes] = useState<string[]>(() => {
@@ -192,7 +192,7 @@ function Workspace({ email }: { email: string }) {
           <span className="brand">Journal</span>
         </div>
         <div className="top-actions">
-          {vault?.kind === 'public' && <button className="icon-btn" title="Publish this vault" onClick={() => setPublishing(true)}><Globe size={18} /></button>}
+          {canPublish && vault?.kind === 'public' && <button className="icon-btn" title="Publish this vault" onClick={() => setPublishing(true)}><Globe size={18} /></button>}
           {!narrow && <button className={'icon-btn' + (canvasOpen ? ' on' : '')} title="Toggle canvas" onClick={() => setCanvasOpen(o => !o)}><LayoutGrid size={18} /></button>}
           <button className="icon-btn" onClick={() => setMenu(m => !m)} aria-label="Settings"><Settings size={18} /></button>
         </div>

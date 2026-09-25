@@ -3,8 +3,9 @@
 // Security model:
 //  - The GitHub token lives only in this function's secrets. It never reaches the browser.
 //  - The target repo is fixed by a secret too, so a caller cannot redirect a publish elsewhere.
-//  - The caller must be a signed-in Smart Journal member (checked through RLS with their own JWT),
-//    and the vault must be `public` in the database — a private vault is refused here, not just hidden in the UI.
+//  - The caller must be allowed to publish (nt_members.can_publish — the garden is one person's repo) and own the
+//    vault (reads go through RLS with their own JWT), and the vault must be `public` in the database — a private
+//    vault is refused here, not just hidden in the UI.
 //  - The vault's folder is derived here from its name in the database; the caller can only write the
 //    shared root files and files inside that one folder (strict path allowlist).
 //  - The new tree = the uploaded files + the folders of the other published vaults, kept as they are.
@@ -155,9 +156,10 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false },
     })
 
-    const { data: member, error: memberErr } = await sb.rpc('nt_is_member')
-    if (memberErr) throw new HttpError(500, `Membership check failed: ${memberErr.message}`)
-    if (member !== true) throw new HttpError(403, 'Not allowed')
+    // the garden is one person's GitHub repo: only accounts marked can_publish may write to it
+    const { data: allowed, error: allowedErr } = await sb.rpc('nt_can_publish')
+    if (allowedErr) throw new HttpError(500, `Permission check failed: ${allowedErr.message}`)
+    if (allowed !== true) throw new HttpError(403, 'Publishing isn’t available for your account')
 
     const token = Deno.env.get('GITHUB_TOKEN')
     const repo = Deno.env.get('GITHUB_REPO')

@@ -37,7 +37,7 @@ function rectAnchor(el: Element | null) {
 
 /** One page: title, the editor, margin comments, backlinks. */
 export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onClose, closing, comments, autoFocus }: Props) {
-  const { pages, pagesIn, getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId } = useStore()
+  const { pages, pagesIn, getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId, addWords } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
@@ -196,7 +196,8 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
         <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
           onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
           comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus}
-          pageId={page && !page.local ? page.id : undefined} />
+          pageId={page && !page.local ? page.id : undefined} typedWords={page?.typed_words ?? 0}
+          onTyped={n => { if (!page || page.local) return false; addWords(page.id, n).catch(console.error); return true }} />
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
         )}

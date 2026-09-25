@@ -81,25 +81,42 @@ function badge(id: string, score: Score | undefined, show: boolean): HTMLElement
   return el
 }
 
-/** Rules for lines that are all AI text, dotted underlines where it's part of a line, a badge where each piece starts. */
+/** How strong a piece's rule is: faint when little of it is still the AI's, strong when it all is. */
+const ruleAlpha = (ai: number | undefined) => (ai == null ? 0.35 : 0.12 + 0.5 * Math.min(1, Math.max(0, ai)))
+
+/**
+ * Lines that are all AI text are tagged with the run they belong to — consecutive lines of the same piece(s) — and
+ * how strong its rule is; the editor draws one unbroken rule per run (a new piece starts a new run, so a part you
+ * redid with another AI tool gets its own). Lines only partly AI get a dotted underline; each piece a badge.
+ */
 function build(doc: PMNode, type: MarkType, { scores, show }: ScoreState): DecorationSet {
   const decos: Decoration[] = []
   const seen = new Set<string>()
   const live = (id: string | undefined) => !!id && !scores.get(id)?.rewritten
+  let run = 0, prevKey: string | null = null
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true
     let total = 0, ai = 0
-    const starts: string[] = []
+    const starts: string[] = [], ids = new Set<string>()
     node.forEach(child => {
       const size = child.isText ? child.text!.length : 1
       total += size
       const id = child.marks.find(m => m.type === type)?.attrs.id as string | undefined
       if (!live(id)) return
       ai += size
+      ids.add(id!)
       if (!seen.has(id!)) { seen.add(id!); starts.push(id!) }
     })
+    const whole = !!ai && ai === total
+    const key = whole ? [...ids].sort().join('|') : null
+    if (key && key !== prevKey) run++
+    prevKey = key
     if (!ai) return false
-    decos.push(Decoration.node(pos, pos + node.nodeSize, { class: ai === total ? 'ai-block' : 'ai-part' }))
+    const known = [...ids].map(i => scores.get(i)?.ai).filter((x): x is number => x != null)
+    const alpha = ruleAlpha(known.length ? Math.max(...known) : undefined)
+    decos.push(Decoration.node(pos, pos + node.nodeSize, whole
+      ? { class: 'ai-block', 'data-ai-run': String(run), 'data-ai-alpha': alpha.toFixed(2) }
+      : { class: 'ai-part' }))
     starts.forEach((id, k) => {
       const s = scores.get(id)
       const label = show && s ? [s.ai, s.words, s.sentences, s.meaning, s.stale, s.seeded].map(String).join('|') : String(show)

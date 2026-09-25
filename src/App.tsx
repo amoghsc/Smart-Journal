@@ -4,7 +4,7 @@ import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
-import { aiScoreGemini, aiScoreOn, aiTwoVersions, setAiScoreGemini, setAiScoreOn, setAiTwoVersions } from './lib/settings'
+import { WRITE_FIRST_WORDS, aiScoreGemini, aiScoreOn, aiTwoVersions, aiWriteFirst, setAiScoreGemini, setAiScoreOn, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
@@ -57,6 +57,7 @@ function Workspace({ email }: { email: string }) {
   const [aiTwo, setAiTwo] = useState(aiTwoVersions)
   const [aiScore, setAiScore] = useState(aiScoreOn)
   const [aiGemini, setAiGemini] = useState(aiScoreGemini)
+  const [writeFirst, setWriteFirst] = useState(aiWriteFirst)
   const [focusLast, setFocusLast] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [closing, setClosing] = useState<string[]>([])
@@ -215,6 +216,9 @@ function Workspace({ email }: { email: string }) {
             {aiScore && <button onClick={() => { setAiScoreGemini(!aiGemini); setAiGemini(!aiGemini) }}
               title="Gemini also judges how far the meaning has moved (20% of the score). Off: words and sentences only. Past results are kept and caught up when you switch it back on.">
               Use Gemini to evaluate AI score: {aiGemini ? 'on' : 'off'}</button>}
+            <button onClick={() => { setAiWriteFirst(!writeFirst); setWriteFirst(!writeFirst) }}
+              title={`The AI tools open in a note once you've typed ${WRITE_FIRST_WORDS} words of your own in it (pasted and AI-written text don't count)`}>
+              AI after {WRITE_FIRST_WORDS} words of my own: {writeFirst ? 'on' : 'off'}</button>
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
         )}

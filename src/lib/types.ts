@@ -30,6 +30,8 @@ export interface Page {
   draft?: boolean
   /** Seconds spent with this note open and in use (see lib/activeTime). */
   active_seconds?: number
+  /** Words typed in this note by hand (not pasted, not AI-written). */
+  typed_words?: number
   /** Local only: created with "+" but not yet written to the database (dropped if left empty). */
   local?: boolean
 }

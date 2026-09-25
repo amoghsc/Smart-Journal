@@ -28,3 +28,9 @@ export const setAiScoreOn = (on: boolean) => setFlag(AI_SCORE, on)
 /** Let Gemini judge the meaning part of the score (default on); off scores words and sentences only. */
 export const aiScoreGemini = () => flag(AI_SCORE_GEMINI)
 export const setAiScoreGemini = (on: boolean) => setFlag(AI_SCORE_GEMINI, on)
+
+// Write first: the AI tools open in a note only once you've typed this many words of your own in it (default off)
+const AI_WRITE_FIRST = 'ai-write-first'
+export const WRITE_FIRST_WORDS = 100
+export const aiWriteFirst = () => { try { return localStorage.getItem(AI_WRITE_FIRST) === '1' } catch { return false } }
+export const setAiWriteFirst = (on: boolean) => setFlag(AI_WRITE_FIRST, on)

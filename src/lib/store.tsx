@@ -5,7 +5,7 @@ import type { CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
 
-const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,created_at,updated_at'
+const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,typed_words,created_at,updated_at'
 
 interface Store {
   session: Session | null
@@ -42,6 +42,8 @@ interface Store {
   copyPages: (ids: string[], vaultId: string) => Promise<number>
   /** Add time spent to a note (atomic on the server; does not change updated_at). */
   addTime: (id: string, seconds: number) => Promise<void>
+  /** Count words typed by hand in a note. */
+  addWords: (id: string, words: number) => Promise<void>
   createVault: (name: string, kind: VaultKind) => Promise<Vault>
   updateVault: (id: string, patch: Partial<Vault>) => Promise<void>
   deleteVault: (id: string) => Promise<void>
@@ -152,6 +154,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!textChanged || (present.updated_at && present.updated_at < cur.updated_at)) {
           // only the time spent (or nothing we show) changed — e.g. another device, or our own save echoing back
           if ((present.active_seconds ?? 0) > (cur.active_seconds ?? 0)) upsertLocal({ ...cur, active_seconds: present.active_seconds })
+          if ((present.typed_words ?? 0) > (cur.typed_words ?? 0)) upsertLocal({ ...(latest.current.get(row.id) ?? cur), typed_words: present.typed_words })
           return
         }
         upsertLocal({ ...cur, ...present })
@@ -351,6 +354,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (p && typeof data === 'number') upsertLocal({ ...p, active_seconds: data })
   }, [])
 
+  const addWords = useCallback(async (id: string, words: number) => {
+    // count them straight away (the write-first lock reads this), then take the server's total
+    const before = latest.current.get(id)
+    if (before) upsertLocal({ ...before, typed_words: (before.typed_words ?? 0) + words })
+    const { data, error } = await supabase.rpc('nt_add_words', { page: id, words })
+    if (error) throw error
+    const p = latest.current.get(id)
+    if (p && typeof data === 'number') upsertLocal({ ...p, typed_words: data })
+  }, [])
+
   // ---- vaults ----
   const createVault = useCallback(async (name: string, kind: VaultKind) => {
     const v: Vault = {
@@ -414,7 +427,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: Store = {
     session, ready, recovering, endRecovery, canPublish, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
-    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime,
+    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime, addWords,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

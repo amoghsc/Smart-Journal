@@ -11,7 +11,7 @@ import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
-import { SETTINGS_EVENT, aiScoreGemini, aiScoreOn, aiTwoVersions } from '../lib/settings'
+import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiScoreGemini, aiScoreOn, aiTwoVersions, aiWriteFirst } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -43,6 +43,10 @@ interface Props {
   autoFocus?: boolean
   /** The note's id once it is saved; AI-written pieces are recorded against it. */
   pageId?: string
+  /** Words typed by hand in this note so far (saved). */
+  typedWords?: number
+  /** Report words just typed by hand; return false to be asked again later (e.g. the note isn't saved yet). */
+  onTyped?: (words: number) => boolean
 }
 
 const LONG_PRESS_MS = 550
@@ -71,6 +75,17 @@ function unlinkElement(view: EditorView, el: HTMLElement) {
   view.focus()
 }
 
+/**
+ * AI results arrive as HTML, with quotes and ampersands escaped (&quot;, &amp;). The editor parses anything with tags,
+ * but inserts a tagless string as literal text, which would show &quot;. So a plain sentence goes in as a text node,
+ * un-escaped (never re-parsed, so words that look like tags stay words).
+ */
+function asContent(html: string): string | { type: 'text'; text: string } {
+  if (/<[a-z][^>]*>/i.test(html)) return html
+  const text = new DOMParser().parseFromString(html, 'text/html').documentElement.textContent ?? html
+  return text ? { type: 'text', text } : html
+}
+
 /** "example.com/x" → "https://example.com/x"; keeps mailto:, tel: and explicit schemes. */
 function normaliseUrl(raw: string): string | null {
   const s = raw.trim()
@@ -83,7 +98,7 @@ function normaliseUrl(raw: string): string | null {
 interface SuggestState { items: SuggestItem[]; index: number; rect: DOMRect | null; command: (item: SuggestItem) => void }
 
 /** Single-surface editor: what you type is what you see. Bullets, numbering, links, [[wikilinks]], comments, YouTube paste. */
-export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus, pageId }: Props) {
+export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus, pageId, typedWords, onTyped }: Props) {
   // latest callbacks, readable from editor options that are captured once
   const open = useRef(onOpenLink); open.current = onOpenLink
   const create = useRef(onCreatePage); create.current = onCreatePage
@@ -93,11 +108,14 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const date = useRef(pickDate); date.current = pickDate
   const ready = useRef(onReady); ready.current = onReady
   const page = useRef(pageId); page.current = pageId
+  const typed = useRef(onTyped); typed.current = onTyped
 
   // hover "unlink" affordance (pointer devices) and long-press unlink (touch)
   const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number } | null>(null)
   // text the AI just wrote has an Undo badge pinned to its top-right corner while it is highlighted
   const [undoBadges, setUndoBadges] = useState<{ id: string; x: number; y: number; age: number }[]>([])
+  // the purple rule beside AI-written text: one unbroken bar per run of lines, measured from the page
+  const [aiBars, setAiBars] = useState<{ run: string; x: number; y: number; h: number; alpha: number }[]>([])
   const badgeLayer = useRef<HTMLElement | null>(null)
   const hideTimer = useRef<number | null>(null)
   const pressTimer = useRef<number | null>(null)
@@ -113,6 +131,17 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
 
   // AI tools (✨): a row in the selection menu; the request runs on the server
   const [aiMode, setAiMode] = useState(false)
+  // write first (a setting): the AI tools open once you've typed enough words of your own in this note.
+  // Words are counted as you type; pasting, dropping and AI-written text don't count.
+  const [writeFirst, setWriteFirst] = useState(aiWriteFirst)
+  const [pendingWords, setPendingWords] = useState(0)
+  const pendingRef = useRef(0)
+  useEffect(() => {
+    const on = () => setWriteFirst(aiWriteFirst())
+    window.addEventListener(SETTINGS_EVENT, on)
+    return () => window.removeEventListener(SETTINGS_EVENT, on)
+  }, [])
+  const wordsToGo = writeFirst ? Math.max(0, WRITE_FIRST_WORDS - (typedWords ?? 0) - pendingWords) : 0
   // accounts that aren't allowed the AI tools don't see ✨ at all
   const [aiAllowed, setAiAllowed] = useState(true)
   useEffect(() => { aiStatus().then(s => setAiAllowed(s !== 'denied')) }, [])
@@ -262,6 +291,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         // in the right margin, just past the text column, so it never sits over words
         const dom = editor.view.dom, box = dom.getBoundingClientRect()
         const margin = Math.min(box.right - parseFloat(getComputedStyle(dom).paddingRight) + 6, box.right - 24) - base.left
+        // AI rule: one bar per run of AI lines, all at the text column's left edge whatever the indent; it runs
+        // unbroken through the run (gaps between paragraphs included) and stops 2px short where another piece begins
+        const padLeft = parseFloat(getComputedStyle(dom).paddingLeft)
+        const ruleX = box.left + padLeft - (padLeft < 36 ? 8 : 10) - base.left
+        const runs = new Map<string, { top: number; bottom: number; alpha: number }>()
+        dom.querySelectorAll<HTMLElement>('[data-ai-run]').forEach(el => {
+          const r = el.getBoundingClientRect(), key = el.dataset.aiRun!
+          const cur = runs.get(key)
+          if (cur) { cur.top = Math.min(cur.top, r.top); cur.bottom = Math.max(cur.bottom, r.bottom); cur.alpha = Math.max(cur.alpha, Number(el.dataset.aiAlpha)) }
+          else runs.set(key, { top: r.top, bottom: r.bottom, alpha: Number(el.dataset.aiAlpha) })
+        })
+        setAiBars([...runs].map(([run, r]) => ({ run, x: ruleX, y: r.top - base.top, h: Math.max(2, r.bottom - r.top - 2), alpha: r.alpha })))
         const now = Date.now()
         setUndoBadges(entries.flatMap(e => {
           const rects = [...dom.querySelectorAll(`[data-ai-fresh="${e.id}"]`)].flatMap(el => [...el.getClientRects()])
@@ -275,6 +316,27 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const ro = new ResizeObserver(place)
     ro.observe(editor.view.dom)
     return () => { editor.off('transaction', place); ro.disconnect(); cancelAnimationFrame(frame); layer.remove(); badgeLayer.current = null }
+  }, [editor])
+
+  // count words typed by hand, and hand them to the note every few seconds (and when it closes)
+  useEffect(() => {
+    if (!editor) return
+    const count = (t: string) => (t.match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).length
+    const onTransaction = ({ transaction: tr }: { transaction: import('@tiptap/pm/state').Transaction }) => {
+      if (!tr.docChanged) return
+      const ui = tr.getMeta('uiEvent')
+      // pasted or dropped text, undo/redo, content loaded from elsewhere, and anything the AI wrote don't count
+      if (ui === 'paste' || ui === 'drop' || tr.getMeta('history$') || tr.getMeta('preventUpdate') || tr.getMeta(aiFreshKey)) return
+      const gained = count(tr.doc.textContent) - count(tr.before.textContent)
+      if (gained > 0) { pendingRef.current += gained; setPendingWords(pendingRef.current) }
+    }
+    const flush = () => {
+      const n = pendingRef.current
+      if (n && typed.current?.(n) !== false) { pendingRef.current = 0; setPendingWords(0) }
+    }
+    editor.on('transaction', onTransaction)
+    const timer = window.setInterval(flush, 5000)
+    return () => { editor.off('transaction', onTransaction); clearInterval(timer); flush() }
   }, [editor])
 
   // AI score: after edits, re-score the note's AI pieces against their originals (instant, in the browser); once you
@@ -426,7 +488,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const id = crypto.randomUUID()
     const chain = editor.chain().focus()
     const inserted = typeof content === 'string'
-      ? chain.insertContentAt({ from, to }, content, { updateSelection: false })
+      ? chain.insertContentAt({ from, to }, asContent(content), { updateSelection: false })
       : chain.command(({ tr }) => { tr.replaceWith(from, to, content); return true })
     inserted.command(({ tr }) => {
       const start = tr.mapping.map(from, -1), end = tr.mapping.map(to, 1)
@@ -591,7 +653,11 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
               {aiAllowed && <>
                 <span className="bubble-sep" />
-                <button className="ai-btn" title="AI" onMouseDown={keep} onClick={() => setAiMode(true)}><Sparkles size={15} /></button>
+                <button className={'ai-btn' + (wordsToGo ? ' locked' : '')} onMouseDown={keep}
+                  title={wordsToGo ? `Write ${wordsToGo} more ${wordsToGo === 1 ? 'word' : 'words'} of your own in this note to use AI` : 'AI'}
+                  onClick={() => wordsToGo
+                    ? toast('Write a little first', `Type ${wordsToGo} more ${wordsToGo === 1 ? 'word' : 'words'} of your own in this note, then the AI tools open.`)
+                    : setAiMode(true)}><Sparkles size={15} /></button>
               </>}
               {comments && <>
                 <span className="bubble-sep" />
@@ -638,6 +704,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           <button className="ai-compare-cancel" onMouseDown={e => e.preventDefault()} onClick={cancelCompare} title="Undo — keep my text (Esc)" aria-label="Undo, keep my text"><Undo2 size={14} /></button>
         </div>,
         compareDom.current,
+      )}
+      {badgeLayer.current && editor && aiBars.length > 0 && createPortal(
+        aiBars.map(b => <span key={b.run} className="ai-bar" aria-hidden style={{ left: b.x, top: b.y, height: b.h, opacity: b.alpha }} />),
+        badgeLayer.current,
       )}
       {badgeLayer.current && editor && undoBadges.length > 0 && createPortal(
         undoBadges.map(b => (

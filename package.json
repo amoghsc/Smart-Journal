@@ -19,6 +19,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "@tiptap/suggestion": "^3.31.3",
     "@xyflow/react": "^12.8.0",
+    "docx": "^9.7.2",
     "dompurify": "^3.2.6",
     "fflate": "^0.8.3",
     "lucide-react": "^1.46.0",

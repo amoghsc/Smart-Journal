@@ -8,6 +8,7 @@ import { useStore } from '../lib/store'
 import { NoteEditor } from '../components/NoteEditor'
 import { Comments } from '../components/Comments'
 import { CopyToVault } from '../components/CopyToVault'
+import { ExportMenu } from '../components/ExportMenu'
 import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../lib/links'
 import { plainText, wordStats } from '../lib/html'
 import { noteSearchKey, setNoteSearch, setNoteSearchCurrent } from '../lib/noteSearch'
@@ -264,6 +265,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
           {page && !page.local && vaults.length > 1 && <CopyToVault page={page} onOpenCopy={onOpenInVault} />}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
           {page && !page.local && <button className="icon-btn" title="Copy link to this note" onClick={share}><Share size={16} /></button>}
+          {page && body.trim() && <ExportMenu title={daily ? prettyDate(title) : title} html={body} />}
           {onNewBeside && <button className="icon-btn" title="New note to the right" onClick={onNewBeside}><SquareSplitHorizontal size={16} /></button>}
           {page && <button className="icon-btn" title="Delete note" onClick={remove}><Trash2 size={16} /></button>}
           {onClose && <button className="icon-btn" title="Close" onClick={onClose}><X size={18} /></button>}

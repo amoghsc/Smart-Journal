@@ -42,6 +42,8 @@ interface Store {
   copyPages: (ids: string[], vaultId: string) => Promise<number>
   /** Add time spent to a note (atomic on the server; does not change updated_at). */
   addTime: (id: string, seconds: number) => Promise<void>
+  /** Copy a note within its vault as "<title> (copy)"; returns the copy. */
+  duplicatePage: (id: string) => Promise<Page>
   /** Count words typed by hand in a note. */
   addWords: (id: string, words: number) => Promise<void>
   createVault: (name: string, kind: VaultKind) => Promise<Vault>
@@ -347,6 +349,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return out.length
   }, [byId])
 
+  const duplicatePage = useCallback(async (id: string) => {
+    const src = latest.current.get(id) ?? byId.get(id)
+    if (!src) throw new Error('Note not found')
+    // a free title next to the original: "Title (copy)", "Title (copy 2)", …
+    const taken = (t: string) => [...latest.current.values()].some(x => x.vault_id === src.vault_id && normTitle(x.title) === normTitle(t))
+    let title = `${src.title} (copy)`, n = 1
+    while (taken(title)) title = `${src.title} (copy ${++n})`
+    // AI-written pieces get ids of their own in the copy, so edits to one copy don't move the other's AI score
+    const aiIds = [...new Set([...src.body.matchAll(/data-ai="([0-9a-f-]{36})"/g)].map(m => m[1]))]
+    const renamed = new Map(aiIds.map(a => [a, crypto.randomUUID()]))
+    const body = src.body.replace(/data-ai="([0-9a-f-]{36})"/g, (_, a: string) => `data-ai="${renamed.get(a)}"`)
+    const now = new Date().toISOString()
+    // a backup in a public vault is held back from publishing until you say otherwise
+    const inPublic = vaults.find(v => v.id === src.vault_id)?.kind === 'public'
+    const p: Page = {
+      id: crypto.randomUUID(), vault_id: src.vault_id, title, kind: isDailyTitle(title) ? 'daily' : 'note', body,
+      draft: inPublic ? true : (src.draft ?? false), created_at: now, updated_at: now, typed_words: src.typed_words ?? 0,
+    }
+    const { error } = await supabase.from('nt_pages').insert({ ...row(p), typed_words: p.typed_words })
+    if (error) throw error
+    upsertLocal(p)
+    const links = extractLinks(body)
+    if (links.length) await supabase.from('nt_links').insert(links.map(t => ({ from_page: p.id, to_title: t })))
+    if (aiIds.length) {
+      const { data } = await supabase.from('nt_ai_pieces').select('id, task, original, seed, seed_meaning, meaning, meaning_of').in('id', aiIds)
+      const copies = (data ?? []).map(r => ({ ...r, id: renamed.get(r.id as string)!, page_id: p.id }))
+      if (copies.length) { const { error: e2 } = await supabase.from('nt_ai_pieces').insert(copies); if (e2) console.warn('duplicate: AI pieces not copied', e2.message) }
+    }
+    return p
+  }, [byId, vaults])
+
   const addTime = useCallback(async (id: string, seconds: number) => {
     const { data, error } = await supabase.rpc('nt_add_time', { page: id, secs: seconds })
     if (error) throw error
@@ -427,7 +460,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value: Store = {
     session, ready, recovering, endRecovery, canPublish, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
-    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, addTime, addWords,
+    ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, duplicatePage, addTime, addWords,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

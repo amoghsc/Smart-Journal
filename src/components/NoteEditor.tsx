@@ -9,6 +9,7 @@ import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader
 import { AI_TASKS, LANGS, aiStatus, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
+import { NoteSearch } from '../lib/noteSearch'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
 import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiScoreGemini, aiScoreOn, aiTwoVersions, aiWriteFirst } from '../lib/settings'
@@ -200,6 +201,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       Comment,
       AiFresh,
       AiText,
+      NoteSearch,
       EditorKeys,
       SwallowTab,
     ],

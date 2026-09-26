@@ -25,6 +25,13 @@ const applyTextSize = (id: TextSize) => document.documentElement.style.setProper
 
 const MAX_PANES = 3
 
+/** Panes after duplicating pane `i` as `title` (see openDuplicate). */
+export function placeDuplicate(panes: string[], i: number, title: string, max = MAX_PANES): string[] {
+  const next = [...panes.slice(0, i + 1), title, ...panes.slice(i + 1)]
+  if (next.length <= max) return next
+  return i < max - 1 ? next.slice(0, max) : next.slice(next.length - max)
+}
+
 const titleFromHash = () => {
   const m = /^#\/page\/(.+)$/.exec(location.hash)
   return m ? decodeURIComponent(m[1]) : null
@@ -172,6 +179,16 @@ function Workspace({ email }: { email: string }) {
   }, [vaults, vault, openInVault])
   const newNoteBeside = useCallback((i: number) => openBeside(i, createUntitled()), [createUntitled, openBeside])
 
+  /**
+   * A duplicate opens right after the note it copies. With three notes open one has to go: duplicating the first or
+   * the middle note drops the last one; duplicating the last drops the first, so the original ends up in the middle.
+   */
+  const openDuplicate = useCallback((i: number, title: string) => {
+    setFocusLast(false)
+    if (narrow || canvasOpen) { setPanes([title]); return }
+    setPanes(ps => placeDuplicate(ps, i, title))
+  }, [narrow, canvasOpen])
+
   const cycleTheme = () => {
     const next: Theme = theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system'
     setTheme(next); localStorage.setItem('theme', next)
@@ -190,7 +207,7 @@ function Workspace({ email }: { email: string }) {
       <header className="top">
         <div className="top-left">
           <button className="icon-btn" title="Toggle sidebar" onClick={() => setSidebar(s => !s)}><PanelLeft size={18} /></button>
-          <span className="brand">Journal</span>
+          <span className="brand">Smart Journal</span>
         </div>
         <div className="top-actions">
           {canPublish && vault?.kind === 'public' && <button className="icon-btn" title="Publish this vault" onClick={() => setPublishing(true)}><Globe size={18} /></button>}
@@ -245,6 +262,7 @@ function Workspace({ email }: { email: string }) {
                     autoFocus={focusLast && i === panes.length - 1}
                     onOpenLink={t => openBeside(i, t, false)}
                     onNewBeside={narrow || canvasOpen ? undefined : () => newNoteBeside(i)}
+                    onDuplicate={t => openDuplicate(i, t)}
                     onNavigate={t => setPanes(ps => ps.map((p, j) => j === i ? t : p))}
                     onRenamed={(from, to) => setPanes(ps => ps.map(p => p === from ? to : p))}
                     onOpenInVault={openInVault}

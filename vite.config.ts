@@ -12,7 +12,7 @@ export default defineConfig({
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Smart Journal',
-        short_name: 'Journal',
+        short_name: 'Smart Journal',
         description: 'Daily notes, linked pages and an infinite canvas',
         theme_color: '#111418',
         background_color: '#111418',

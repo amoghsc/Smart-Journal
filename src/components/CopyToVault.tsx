@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Globe, Lock, X } from 'lucide-react'
+import { Check, FolderOutput, Globe, Lock, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { extractLinks } from '../lib/html'
 import { isDailyTitle, normTitle, prettyDate } from '../lib/links'
@@ -32,7 +32,7 @@ export function CopyToVault({ page, onOpenCopy }: Props) {
   return (
     <div className="move" ref={box}>
       <button className={'icon-btn' + (open ? ' on' : '')} title="Copy to another vault" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-        <Copy size={16} />
+        <FolderOutput size={16} />
       </button>
       {open && (
         <div className="move-menu" role="menu">
@@ -103,7 +103,7 @@ function CopyDialog({ page, target, onClose, onOpenCopy }: { page: Page; target:
     <div className="modal-bg" onMouseDown={() => { if (!busy) onClose() }}>
       <div className="modal copy" onMouseDown={e => e.stopPropagation()}>
         <div className="modal-head">
-          <h2><Copy size={15} /> Copy to “{target.name}”</h2>
+          <h2><FolderOutput size={15} /> Copy to “{target.name}”</h2>
           <button className="icon-btn" onClick={onClose} disabled={busy} aria-label="Close"><X size={18} /></button>
         </div>
 

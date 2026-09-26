@@ -43,3 +43,12 @@ export function plainText(html: string, max = 200): string {
   const t = unescape(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
   return max && t.length > max ? t.slice(0, max) + '…' : t
 }
+
+/** A note's word count, leaving out struck-through words (those are counted separately, as removed). */
+export function wordStats(html: string): { words: number; struck: number } {
+  if (typeof html !== 'string') return { words: 0, struck: 0 }
+  const count = (h: string) => plainText(h, 0).split(/\s+/).filter(Boolean).length
+  let struck = 0
+  for (const m of html.matchAll(/<s(?:\s[^>]*)?>([\s\S]*?)<\/s>/g)) struck += count(m[1])
+  return { words: Math.max(0, count(html) - struck), struck }
+}

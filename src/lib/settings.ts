@@ -12,7 +12,6 @@ export function setAiTwoVersions(on: boolean) {
 
 // AI score: how much of each piece of AI-written text is still the AI's, shown next to its ✦
 const AI_SCORE = 'ai-score'
-const AI_SCORE_GEMINI = 'ai-score-gemini'
 /** Fired on window when a setting changes, so open notes can redraw. */
 export const SETTINGS_EVENT = 'sj-settings'
 
@@ -25,9 +24,12 @@ const setFlag = (key: string, on: boolean) => {
 /** Show the AI share (%) beside AI-written text (default on). */
 export const aiScoreOn = () => flag(AI_SCORE)
 export const setAiScoreOn = (on: boolean) => setFlag(AI_SCORE, on)
-/** Let Gemini judge the meaning part of the score (default on); off scores words and sentences only. */
-export const aiScoreGemini = () => flag(AI_SCORE_GEMINI)
-export const setAiScoreGemini = (on: boolean) => setFlag(AI_SCORE_GEMINI, on)
+// AI features: the master switch for everything that uses Gemini (default on). Off hides ✨, stops every Gemini call —
+// the AI score's meaning check too, so scores fall back to words and sentences — and hides the score numbers.
+// Meaning checks skipped while it's off are caught up when it's switched back on.
+const AI_FEATURES = 'ai-features'
+export const aiFeaturesOn = () => flag(AI_FEATURES)
+export const setAiFeaturesOn = (on: boolean) => setFlag(AI_FEATURES, on)
 
 // Write first: the AI tools open in a note only once you've typed this many words of your own in it (default off)
 const AI_WRITE_FIRST = 'ai-write-first'

@@ -10,9 +10,10 @@ import { AI_TASKS, LANGS, aiStatus, detectLanguage, parseChoices, runAi, runAiOp
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { NoteSearch } from '../lib/noteSearch'
+import { cleanPastedHtml, plainTextSlice } from '../lib/paste'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
-import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiScoreGemini, aiScoreOn, aiTwoVersions, aiWriteFirst } from '../lib/settings'
+import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiTwoVersions, aiWriteFirst } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -144,8 +145,15 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   }, [])
   const wordsToGo = writeFirst ? Math.max(0, WRITE_FIRST_WORDS - (typedWords ?? 0) - pendingWords) : 0
   // accounts that aren't allowed the AI tools don't see ✨ at all
+  // (and with AI features switched off in settings, nobody does)
   const [aiAllowed, setAiAllowed] = useState(true)
+  const [aiOn, setAiOn] = useState(aiFeaturesOn)
   useEffect(() => { aiStatus().then(s => setAiAllowed(s !== 'denied')) }, [])
+  useEffect(() => {
+    const on = () => setAiOn(aiFeaturesOn())
+    window.addEventListener(SETTINGS_EVENT, on)
+    return () => window.removeEventListener(SETTINGS_EVENT, on)
+  }, [])
   // Translate › opens a small menu to its right; `translateAt` is where
   const [translateAt, setTranslateAt] = useState<{ left: number; top: number } | null>(null)
   const translateTimer = useRef<number | null>(null)
@@ -209,6 +217,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     autofocus: autoFocus ? 'end' : false,
     editorProps: {
       attributes: { class: 'note', spellcheck: 'true' },
+      // pasted text takes the note's own look: only bold, italic, strikethrough, highlight, links and lists survive
+      transformPastedHTML: html => cleanPastedHtml(html),
+      clipboardTextParser: (text, $context) => plainTextSlice($context.doc.type.schema, text),
       handleKeyDown: (view, event) => {
         // ⌘K / Ctrl+K: link the selected words
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -352,7 +363,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       const texts = pieceTexts(editor.state.doc, type)
       if (texts.size) { try { await loadPieces(texts) } catch (e) { console.warn('ai score: could not load pieces', e); return } }
       if (!alive || editor.isDestroyed) return
-      const gemini = aiScoreGemini(), show = aiScoreOn()
+      const gemini = aiFeaturesOn(), show = gemini && aiScoreOn()
       const now = pieceTexts(editor.state.doc, type)
       const scores = new Map<string, Score>()
       for (const [id, text] of now) { const s = scoreFor(id, text, gemini); if (s) scores.set(id, s) }
@@ -653,7 +664,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               <button className={active?.strike ? 'on' : ''} title="Strikethrough (⌘⇧S)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
               <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
-              {aiAllowed && <>
+              {aiAllowed && aiOn && <>
                 <span className="bubble-sep" />
                 <button className={'ai-btn' + (wordsToGo ? ' locked' : '')} onMouseDown={keep}
                   title={wordsToGo ? `Write ${wordsToGo} more ${wordsToGo === 1 ? 'word' : 'words'} of your own in this note to use AI` : 'AI'}

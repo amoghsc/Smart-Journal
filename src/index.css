@@ -55,9 +55,20 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .menu { position: absolute; right: 8px; top: calc(40px + var(--sat)); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; z-index: 50; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
 .menu button { display: block; width: 100%; text-align: left; padding: 9px 14px; font-size: 14px; }
 .menu button:hover { background: var(--bg3); }
-.menu-email { padding: 8px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.menu-email { padding: 8px 14px; font-size: 12px; color: var(--muted); }
 /* text size: three A's, small to large */
+.menu { width: 280px; }
 .menu-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px 6px 14px; font-size: 14px; }
+.menu button.menu-row { display: flex; padding: 8px 12px 8px 14px; text-align: left; }
+.menu-value { color: var(--muted); font-size: 13px; }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
+/* iOS-style switch, right-aligned in its row */
+.switch-label { flex: 1; min-width: 0; }
+.switch { flex: none; position: relative; width: 36px; height: 21px; border-radius: 11px; background: var(--bg3); box-shadow: inset 0 0 0 1px var(--line); transition: background-color .18s ease; }
+.switch.on { background: #34c759; box-shadow: none; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform .18s ease; }
+.switch.on .switch-knob { transform: translateX(15px); }
+.menu button.switch-row.disabled, .menu button.switch-row:disabled { opacity: 0.4; cursor: default; background: none; }
 .size-pick { display: flex; align-items: flex-end; gap: 2px; }
 .menu .size-pick button { display: inline-flex; align-items: flex-end; justify-content: center; width: 28px; height: 28px; padding: 0 0 5px; border-radius: 6px; line-height: 1; font-weight: 600; color: var(--muted); }
 .menu .size-pick button.on { background: var(--bg3); color: var(--fg); }

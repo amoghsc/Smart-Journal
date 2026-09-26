@@ -4,7 +4,8 @@ import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
-import { WRITE_FIRST_WORDS, aiScoreGemini, aiScoreOn, aiTwoVersions, aiWriteFirst, setAiScoreGemini, setAiScoreOn, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
+import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
+import { SwitchRow } from './components/Switch'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
@@ -63,7 +64,7 @@ function Workspace({ email }: { email: string }) {
   const [textSize, setTextSize] = useState<TextSize>(() => { const v = localStorage.getItem('text-size'); return v === 's' || v === 'l' ? v : 'm' })
   const [aiTwo, setAiTwo] = useState(aiTwoVersions)
   const [aiScore, setAiScore] = useState(aiScoreOn)
-  const [aiGemini, setAiGemini] = useState(aiScoreGemini)
+  const [aiOn, setAiOn] = useState(aiFeaturesOn)
   const [writeFirst, setWriteFirst] = useState(aiWriteFirst)
   const [focusLast, setFocusLast] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -217,6 +218,7 @@ function Workspace({ email }: { email: string }) {
         {menu && (
           <div className="menu" onMouseLeave={() => setMenu(false)}>
             <div className="menu-email">{email}</div>
+            <div className="menu-sep" />
             <div className="menu-row" role="group" aria-label="Text size">
               <span>Text size</span>
               <span className="size-pick">
@@ -226,16 +228,18 @@ function Workspace({ email }: { email: string }) {
                 ))}
               </span>
             </div>
-            <button onClick={cycleTheme}>Theme: {theme}</button>
-            <button onClick={() => setAnim(a => !a)}>Animations: {anim ? 'on' : 'off'}</button>
-            <button onClick={() => { setAiTwoVersions(!aiTwo); setAiTwo(!aiTwo) }} title="Two: compare two AI versions and pick one. One: apply a single response straight away.">AI versions: {aiTwo ? 'two to choose from' : 'one'}</button>
-            <button onClick={() => { setAiScoreOn(!aiScore); setAiScore(!aiScore) }} title="Beside AI-written text, show how much of it is still the AI's (%)">AI score: {aiScore ? 'on' : 'off'}</button>
-            {aiScore && <button onClick={() => { setAiScoreGemini(!aiGemini); setAiGemini(!aiGemini) }}
-              title="Gemini also judges how far the meaning has moved (20% of the score). Off: words and sentences only. Past results are kept and caught up when you switch it back on.">
-              Use Gemini to evaluate AI score: {aiGemini ? 'on' : 'off'}</button>}
-            <button onClick={() => { setAiWriteFirst(!writeFirst); setWriteFirst(!writeFirst) }}
-              title={`The AI tools open in a note once you've typed ${WRITE_FIRST_WORDS} words of your own in it (pasted and AI-written text don't count)`}>
-              AI after {WRITE_FIRST_WORDS} words of my own: {writeFirst ? 'on' : 'off'}</button>
+            <button className="menu-row" onClick={cycleTheme} title="System, dark or light"><span>Theme</span><span className="menu-value">{theme[0].toUpperCase() + theme.slice(1)}</span></button>
+            <SwitchRow label="Animations" on={anim} onChange={setAnim} />
+            <div className="menu-sep" />
+            <SwitchRow label="AI features" on={aiOn} onChange={on => { setAiFeaturesOn(on); setAiOn(on) }}
+              hint="The ✨ writing tools and the AI score's meaning check, using Gemini. Off: no AI, and no text is sent to Gemini." />
+            <SwitchRow label={`AI text options: ${aiTwo ? 2 : 1}`} on={aiTwo} disabled={!aiOn} onChange={on => { setAiTwoVersions(on); setAiTwo(on) }}
+              hint="On: two AI versions to compare and pick from. Off: one, applied straight away." />
+            <SwitchRow label="AI score" on={aiScore} disabled={!aiOn} onChange={on => { setAiScoreOn(on); setAiScore(on) }}
+              hint="Beside AI-written text, show how much of it is still the AI's (%)" />
+            <SwitchRow label="Nudge typing over AI initially" on={writeFirst} disabled={!aiOn} onChange={on => { setAiWriteFirst(on); setWriteFirst(on) }}
+              hint={`The AI tools open in a note once you've typed ${WRITE_FIRST_WORDS} words of your own in it (pasted and AI-written text don't count)`} />
+            <div className="menu-sep" />
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
         )}

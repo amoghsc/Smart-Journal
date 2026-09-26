@@ -170,13 +170,27 @@ p.small { margin: 0; line-height: 1.45; }
 .pane-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* in the column the title keeps the height it's sized to (flex: 1 from the old row layout would squash it to one line) */
 .pane-title .title-input { flex: none; width: 100%; }
+
+/* one note on a wide screen: the column (title, search, text, backlinks) is centred with the scrollbar close by —
+   96px beside the text, or 300px when the note has comments to show in that margin. Title, word count, search bar
+   and text all start at the same edge. */
+@media (min-width: 801px) {
+  .panes[data-count="1"] .pane { --side: 96px; }
+  .panes[data-count="1"] .pane.with-comments { --side: 300px; }
+  .panes[data-count="1"] :is(.pane-head, .pane-body, .backlinks) { width: min(100%, calc(680px + 2 * var(--side))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
+  .panes[data-count="1"] :is(.pane-head, .backlinks) { padding-left: var(--side); padding-right: var(--side); }
+  .panes[data-count="1"] .note { padding-left: var(--side); padding-right: var(--side); }
+  .panes[data-count="1"] .note-find { width: min(calc(100% - 2 * var(--side)), 680px); margin: 0 auto 12px; box-sizing: border-box; }
+}
 .pane-meta { font-size: 12px; color: var(--muted); line-height: 1.4; }
+/* an icon mirrored left-to-right (the copy-to-vault arrow points right, out of the folder) */
+.icon-flip { transform: scaleX(-1); }
 .pane-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; position: relative; }
 
 /* find in this note: a slim bar under the title, highlights in the text, and a mark beside the scrollbar for each
    match — placed at the match's position in the whole note, so every match shows at once */
-.note-find { flex: none; display: flex; align-items: center; gap: 4px; margin: 0 var(--gutter) 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
+.note-find { flex: none; display: flex; align-items: center; gap: 4px; margin: 0 var(--gutter) 12px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
 .note-find-icon { color: var(--muted); flex: none; }
 .note-find input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 4px 4px; font-size: 14px; outline: none; }
 .note-find input:focus { border: 0; background: transparent; }
@@ -185,9 +199,9 @@ p.small { margin: 0; line-height: 1.45; }
 .note-find .icon-btn:disabled { opacity: 0.35; }
 .search-hit { background: rgba(250, 204, 21, 0.4); border-radius: 2px; }
 .search-hit.current { background: #fbbf24; color: #111; box-shadow: 0 0 0 1px #f59e0b; }
-.find-marks { position: absolute; top: 2px; bottom: 2px; width: 7px; pointer-events: none; z-index: 6; }
-.find-mark { position: absolute; left: 0; width: 7px; height: 3px; padding: 0; margin-top: -1px; border-radius: 1px; background: #facc15; pointer-events: auto; cursor: pointer; }
-.find-mark.current { background: #f59e0b; height: 4px; }
+.find-marks { position: absolute; top: 4px; bottom: 4px; width: 7px; pointer-events: none; z-index: 6; }
+.find-mark { position: absolute; left: 0; width: 7px; height: 7px; padding: 0; margin-top: -3.5px; border-radius: 50%; background: #facc15; pointer-events: auto; cursor: pointer; }
+.find-mark.current { background: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3); }
 
 /* editor */
 .note-wrap { flex: 1; display: flex; flex-direction: column; }

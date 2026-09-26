@@ -184,7 +184,9 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
     if (el.firstElementChild) ro.observe(el.firstElementChild)
     return () => { cancelAnimationFrame(frame); ro.disconnect() }
   }, [findOpen, hits, body])
+  // the marks sit a little inside the scrollbar (a thin overlay scrollbar takes no width, so allow for one)
   const scrollbarWidth = scrollRef.current ? scrollRef.current.offsetWidth - scrollRef.current.clientWidth : 0
+  const marksRight = Math.max(scrollbarWidth, 10) + 12
 
   /** Copy a link to this note: its public address if the vault is on the site, otherwise a link into the app. */
   const share = async () => {
@@ -222,7 +224,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   }
 
   return (
-    <div ref={paneRef} className={'pane' + (closing ? ' closing' : '')}>
+    <div ref={paneRef} className={'pane' + (closing ? ' closing' : '') + (comments && showComments && body.includes('data-comment-id') ? ' with-comments' : '')}>
       <div className="pane-head">
         <div className="pane-title">
         {daily ? (
@@ -243,7 +245,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } if (e.key === 'Escape') { setTitleText(title); e.currentTarget.blur() } }} />
         )}
           <div className="pane-meta">
-            <span title="Words in this note (struck-through words not counted)">{words} {words === 1 ? 'word' : 'words'}</span>
+            <span title="Words in this note (struck-through words not counted)">{words === 1 ? 'word' : 'words'} {words}</span>
             {struck > 0 && <span title="Struck-through words"> · <s>removed</s> {struck}</span>}
             <NoteTime saved={page?.active_seconds ?? 0} id={page?.local ? undefined : page?.id} />
           </div>
@@ -296,7 +298,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
         )}
       </div>
       {marks.length > 0 && (
-        <div className="find-marks" style={{ right: scrollbarWidth }} aria-hidden>
+        <div className="find-marks" style={{ right: marksRight }} aria-hidden>
           {marks.map(m => <button key={m.hit} tabIndex={-1} className={'find-mark' + (m.current ? ' current' : '')} style={{ top: `${m.top}%` }} onClick={() => showHit(m.hit)} />)}
         </div>
       )}

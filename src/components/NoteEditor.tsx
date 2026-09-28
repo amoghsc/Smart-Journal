@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
-import { PluginKey, Selection } from '@tiptap/pm/state'
+import { PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import type { Fragment, Slice } from '@tiptap/pm/model'
-import { Bold, Check, ChevronRight, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
+import { Bold, Check, ChevronRight, SquareSplitHorizontal, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, LANGS, aiStatus, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
@@ -315,14 +315,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           if (cur) { cur.top = Math.min(cur.top, r.top); cur.bottom = Math.max(cur.bottom, r.bottom); cur.alpha = Math.max(cur.alpha, Number(el.dataset.aiAlpha)) }
           else runs.set(key, { top: r.top, bottom: r.bottom, alpha: Number(el.dataset.aiAlpha) })
         })
-        setAiBars([...runs].map(([run, r]) => ({ run, x: ruleX, y: r.top - base.top, h: Math.max(2, r.bottom - r.top - 2), alpha: r.alpha })))
+        // set only when something moved: a new array every transaction would re-render the editor every time
+        const bars = [...runs].map(([run, r]) => ({ run, x: ruleX, y: r.top - base.top, h: Math.max(2, r.bottom - r.top - 2), alpha: r.alpha }))
+        setAiBars(prev => (JSON.stringify(prev) === JSON.stringify(bars) ? prev : bars))
         const now = Date.now()
-        setUndoBadges(entries.flatMap(e => {
+        const badges = entries.flatMap(e => {
           const rects = [...dom.querySelectorAll(`[data-ai-fresh="${e.id}"]`)].flatMap(el => [...el.getClientRects()])
           if (!rects.length) return []
           const first = rects.reduce((a, r) => (r.top < a.top ? r : a))
           return [{ id: e.id, x: margin, y: first.top + first.height / 2 - base.top, age: now - e.at }]
-        }))
+        })
+        const where = (list: typeof badges) => list.map(b => `${b.id}@${Math.round(b.x)},${Math.round(b.y)}`).join('|')
+        setUndoBadges(prev => (where(prev) === where(badges) ? prev : badges))
       })
     }
     editor.on('transaction', place)
@@ -572,6 +576,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const bubbleKey = useRef(new PluginKey('noteBubble')).current
   const flags = useRef({ linkMode, aiBusy: !!aiBusy, choices: !!choices })
   flags.current = { linkMode, aiBusy: !!aiBusy, choices: !!choices }
+  // one function for the life of the editor: the menu re-sends its options to the editor whenever this changes,
+  // and a new function every render meant an editor update every render (which re-rendered, and so on)
+  const shouldShowBubble = useCallback(({ editor: e, state }: { editor: Editor; state: EditorState }) =>
+    (!state.selection.empty || flags.current.linkMode || flags.current.aiBusy || flags.current.choices) && e.isEditable, [])
 
   const addComment = () => {
     if (!editor) return
@@ -612,7 +620,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     <>
       {editor && (
         <BubbleMenu editor={editor} pluginKey={bubbleKey} className="bubble"
-          shouldShow={({ editor: e, state }) => (!state.selection.empty || flags.current.linkMode || flags.current.aiBusy || flags.current.choices) && e.isEditable}>
+          shouldShow={shouldShowBubble}>
           {aiBusy ? (
             <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
           ) : choices ? (
@@ -744,7 +752,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       )}
       {hoverLink && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
-          <button onMouseDown={e => e.preventDefault()} onClick={() => { unlinkElement(editor.view, hoverLink.el); setHoverLink(null) }}><Unlink size={13} /><span>Unlink</span></button>
+          <button title="Open this note on the side" onMouseDown={e => e.preventDefault()}
+            onClick={() => { open.current(hoverLink.el.getAttribute('data-title') ?? hoverLink.el.textContent ?? ''); setHoverLink(null) }}>
+            <SquareSplitHorizontal size={13} /><span>Open on the side</span></button>
+                    <button onMouseDown={e => e.preventDefault()} onClick={() => { unlinkElement(editor.view, hoverLink.el); setHoverLink(null) }}><Unlink size={13} /><span>Unlink</span></button>
         </div>
       )}
     </>

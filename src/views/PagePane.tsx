@@ -12,6 +12,8 @@ import { ExportMenu } from '../components/ExportMenu'
 import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../lib/links'
 import { plainText, wordStats } from '../lib/html'
 import { noteSearchKey, setNoteSearch, setNoteSearchCurrent } from '../lib/noteSearch'
+import { pickDateAt } from '../lib/datePicker'
+import { sanitize } from '../lib/html'
 
 interface Props {
   title: string
@@ -25,6 +27,11 @@ interface Props {
   onNewBeside?: () => void
   /** Show a just-made duplicate of this note beside it. */
   onDuplicate?: (title: string) => void
+  /**
+   * One day inside the journal stream: the header sticks while its day scrolls by, the page flows (no scroller of
+   * its own), no backlinks. `live`: near the screen, so it's editable; otherwise the text is shown, not edited.
+   */
+  section?: { live: boolean }
   onClose?: () => void
   /** Play the exit animation (the parent removes the pane afterwards). */
   closing?: boolean
@@ -40,7 +47,7 @@ function rectAnchor(el: Element | null) {
 }
 
 /** One page: title, the editor, margin comments, backlinks. */
-export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onDuplicate, onClose, closing, comments, autoFocus }: Props) {
+export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onDuplicate, onClose, closing, comments, autoFocus, section }: Props) {
   const { pages, pagesIn, getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId, addWords, duplicatePage, saveNow } = useStore()
   const page = getPage(title)
   const body = page?.body ?? ''
@@ -89,20 +96,9 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   useEffect(() => { if (!daily && /^untitled( \d+)?$/i.test(title) && !body) titleInput.current?.select() }, [title, daily, body])
   useEffect(() => { localStorage.setItem('comments', showComments ? '1' : '0') }, [showComments])
 
-  // native date picker, opened by "/date" (title or text) and the calendar button
-  const dateInput = useRef<HTMLInputElement>(null)
-  const datePending = useRef<((d: string | null) => void) | null>(null)
-  const pickDate = (anchor?: { x: number; y: number }) => new Promise<string | null>(resolve => {
-    const el = dateInput.current
-    if (!el) { resolve(null); return }
-    datePending.current?.(null)
-    datePending.current = resolve
-    // the native popup anchors to the input, so park the (invisible) input where the user is
-    const a = anchor ?? rectAnchor(titleInput.current)
-    el.style.left = `${Math.round(a.x)}px`; el.style.top = `${Math.round(a.y)}px`
-    el.value = daily ? title : todayTitle()
-    try { el.showPicker() } catch { el.focus(); el.click() }
-  })
+  // the app's calendar, opened by "/date" (title or text) and the calendar button
+  const pickDate = (anchor?: { x: number; y: number }) =>
+    pickDateAt(anchor ?? rectAnchor(titleInput.current ?? paneRef.current?.querySelector('.pane-head h1') ?? null), daily ? title : todayTitle())
   /** Make this pane show the given day: an untouched note just navigates, a written one is renamed to that day. */
   const goToDate = async (d: string) => {
     if (!page || page.local || !body.trim()) { onNavigate(d); return }
@@ -131,6 +127,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
     } catch (e) { toast('Couldn’t duplicate this note', (e as Error).message) } finally { setDuplicating(false) }
   }
 
+  const inSection = !!section
   // ---- find in this note: highlights in the text, and marks beside the scrollbar for where each match is ----
   const [findOpen, setFindOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -150,7 +147,12 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     setNoteSearch(editor.view, findOpen ? query : '')
-    const sync = () => { const st = noteSearchKey.getState(editor.state); setHits({ count: st?.hits.length ?? 0, current: st?.current ?? -1 }) }
+    // only a real change re-renders (every editor transaction calls this)
+    const sync = () => {
+      const st = noteSearchKey.getState(editor.state)
+      const count = st?.hits.length ?? 0, current = st?.current ?? -1
+      setHits(h => (h.count === count && h.current === current ? h : { count, current }))
+    }
     sync()
     editor.on('transaction', sync)
     return () => { editor.off('transaction', sync) }
@@ -163,7 +165,8 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   // where each match sits in the whole note, as a share of its height: that's where its mark goes beside the scrollbar
   useEffect(() => {
     const el = scrollRef.current
-    if (!el || !findOpen || !hits.count) { setMarks([]); return }
+    // (in the journal a day has no scrollbar of its own, so no marks)
+    if (!el || !findOpen || !hits.count || inSection) { setMarks(m => (m.length ? [] : m)); return }
     let frame = 0
     const measure = () => {
       cancelAnimationFrame(frame)
@@ -184,7 +187,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
     ro.observe(el)
     if (el.firstElementChild) ro.observe(el.firstElementChild)
     return () => { cancelAnimationFrame(frame); ro.disconnect() }
-  }, [findOpen, hits, body])
+  }, [findOpen, hits, body, inSection])
   // the marks sit a little inside the scrollbar (a thin overlay scrollbar takes no width, so allow for one)
   const scrollbarWidth = scrollRef.current ? scrollRef.current.offsetWidth - scrollRef.current.clientWidth : 0
   const marksRight = Math.max(scrollbarWidth, 10) + 12
@@ -225,14 +228,18 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   }
 
   return (
-    <div ref={paneRef} className={'pane' + (closing ? ' closing' : '') + (comments && showComments && body.includes('data-comment-id') ? ' with-comments' : '')}>
+    <div ref={paneRef} data-date={section ? title : undefined}
+      className={'pane' + (section ? ' section' : '') + (closing ? ' closing' : '') + (comments && showComments && body.includes('data-comment-id') ? ' with-comments' : '')}>
+      <div className="pane-top">
       <div className="pane-head">
         <div className="pane-title">
         {daily ? (
           <div className="daily-nav">
             <h1>{prettyDate(title)}</h1>
-            <button className="icon-btn" onClick={() => onNavigate(shiftDay(title, -1))} aria-label="Previous day"><ChevronLeft size={18} /></button>
-            <button className="icon-btn" onClick={() => onNavigate(shiftDay(title, 1))} aria-label="Next day"><ChevronRight size={18} /></button>
+            {!section && <>
+              <button className="icon-btn" onClick={() => onNavigate(shiftDay(title, -1))} aria-label="Previous day"><ChevronLeft size={18} /></button>
+              <button className="icon-btn" onClick={() => onNavigate(shiftDay(title, 1))} aria-label="Next day"><ChevronRight size={18} /></button>
+            </>}
             <button className="icon-btn" title="Pick a date" onClick={e => pickDate(rectAnchor(e.currentTarget)).then(d => d && onNavigate(d))}><CalendarDays size={16} /></button>
             {title !== todayTitle() && <button className="link" onClick={() => onNavigate(todayTitle())}>Today</button>}
           </div>
@@ -251,8 +258,6 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
             <NoteTime saved={page?.active_seconds ?? 0} id={page?.local ? undefined : page?.id} />
           </div>
         </div>
-        <input ref={dateInput} type="date" className="date-hidden" tabIndex={-1} aria-hidden
-          onChange={e => { const cb = datePending.current; datePending.current = null; cb?.(e.target.value || null) }} />
         <div className="pane-actions">
           {page && vault?.kind === 'public' && (
             <button className={'icon-btn' + (page.draft ? ' on' : '')} title={page.draft ? 'Held back — click to include when publishing' : 'Included when publishing — click to hold back'}
@@ -288,13 +293,18 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
         </div>
       )}
 
+      </div>
+
       <div className="pane-body">
       <div ref={scrollRef} className={'pane-scroll' + (showComments ? '' : ' comments-hidden')}>
-        <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
+        {section && !section.live ? (
+          // a day away from the screen in the journal: its text, laid out as the editor would, until it comes near
+          <div className="note-wrap"><div className="note static" dangerouslySetInnerHTML={{ __html: sanitize(body) || '<p></p>' }} /></div>
+        ) : <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
           onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
           comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus}
           pageId={page && !page.local ? page.id : undefined} typedWords={page?.typed_words ?? 0}
-          onTyped={n => { if (!page || page.local) return false; addWords(page.id, n).catch(console.error); return true }} />
+          onTyped={n => { if (!page || page.local) return false; addWords(page.id, n).catch(console.error); return true }} />}
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
         )}
@@ -306,7 +316,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
       )}
       </div>
 
-      {linkedFrom.length > 0 && <>
+      {linkedFrom.length > 0 && !section && <>
         <div className="bl-divider" role="separator" aria-orientation="horizontal" title="Drag to resize · double-click to reset"
           onPointerDown={onDividerDown} onPointerMove={onDividerMove} onPointerUp={onDividerUp} onPointerCancel={onDividerUp} onDoubleClick={resetBacklinks} />
         <div ref={blRef} className={'backlinks' + (blHeight == null ? ' auto' : '')} style={blHeight == null ? undefined : { height: blHeight }}>

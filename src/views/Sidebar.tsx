@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, List, Plus, Search, SquareSplitHorizontal, X } from 'lucide-react'
+import { CalendarDays, Plus, Search, SquareSplitHorizontal, X } from 'lucide-react'
 import { VaultSwitcher } from './VaultSwitcher'
 import { useStore } from '../lib/store'
 import { isDailyTitle, prettyDate, todayTitle } from '../lib/links'
 import { plainText } from '../lib/html'
+import { JOURNAL } from './JournalPane'
 
-type Filter = 'all' | 'daily'
 
 interface Props {
   current: string
@@ -22,24 +22,19 @@ interface Props {
 export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpenBeside, onNew }: Props) {
   const { pages } = useStore()
   const [q, setQ] = useState('')
-  const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem('side-filter') as Filter) || 'all')
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => { if (searchOpen) input.current?.focus(); else setQ('') }, [searchOpen])
-  useEffect(() => { localStorage.setItem('side-filter', filter) }, [filter])
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
-    let notes = pages.filter(p => p.kind !== 'canvas')
-    if (filter === 'daily') notes = notes.filter(p => isDailyTitle(p.title))
-    const hits = s ? notes.filter(p => p.title.toLowerCase().includes(s) || plainText(p.body, 0).toLowerCase().includes(s)) : notes
-    return filter === 'daily'
-      ? [...hits].sort((a, b) => b.title.localeCompare(a.title))
-      : [...hits].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-  }, [pages, q, filter])
+    // days live in the journal (one entry at the top); a search finds them too, and opens the journal at that day
+    const notes = pages.filter(p => p.kind !== 'canvas' && (s || !isDailyTitle(p.title)))
+    const hits = s ? notes.filter(p => p.title.toLowerCase().includes(s) || prettyDate(p.title, true).toLowerCase().includes(s) || plainText(p.body, 0).toLowerCase().includes(s)) : notes
+    return [...hits].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  }, [pages, q])
 
   const today = todayTitle()
-  const hasToday = list.some(p => p.title === today)
   const label = (title: string) => isDailyTitle(title) ? prettyDate(title, true) : title
 
   const draftIds = new Set(pages.filter(p => p.draft).map(p => p.title))
@@ -57,20 +52,21 @@ export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpe
       <VaultSwitcher />
       <div className="side-head">
         {searchOpen ? (
-          <input ref={input} value={q} placeholder={filter === 'daily' ? 'Search days' : 'Search notes'} onChange={e => setQ(e.target.value)}
+          <input ref={input} value={q} placeholder="Search notes and days" onChange={e => setQ(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') onSearchOpen(false); if (e.key === 'Enter' && list[0]) onOpen(list[0].title) }} />
-        ) : (
-          <div className="seg">
-            <button className={filter === 'all' ? 'on' : ''} title="All notes" onClick={() => setFilter('all')}><List size={15} /></button>
-            <button className={filter === 'daily' ? 'on' : ''} title="Daily notes" onClick={() => setFilter('daily')}><CalendarDays size={15} /></button>
-          </div>
-        )}
+        ) : <span className="side-title">Notes</span>}
         <span className="spacer" />
         <button className="icon-btn" title={searchOpen ? 'Close search' : 'Search'} onClick={() => onSearchOpen(!searchOpen)}>{searchOpen ? <X size={16} /> : <Search size={16} />}</button>
         <button className="icon-btn new-note" title="New note (Ctrl+N)" onClick={onNew}><Plus size={20} strokeWidth={2.5} /></button>
       </div>
       <ul className="side-list">
-        {!q && !hasToday && row(today, 'today')}
+        {!q && (
+          <li key="journal" className={'journal-row' + (current === JOURNAL ? ' on' : '')} onClick={() => onOpen(JOURNAL)} title="All your days, newest first">
+            <CalendarDays size={14} className="journal-icon" />
+            <span className="row-label">Journal</span>
+            <span className="journal-date">{prettyDate(today, true)}</span>
+          </li>
+        )}
         {list.map(p => row(p.title, p.id))}
         {list.length === 0 && q && <li className="empty">No matches</li>}
       </ul>

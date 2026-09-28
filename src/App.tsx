@@ -13,6 +13,9 @@ import { Sidebar } from './views/Sidebar'
 import { CanvasPane } from './views/CanvasPane'
 import { PublishDialog } from './views/PublishDialog'
 import { SplitPane } from './components/SplitPane'
+import { JOURNAL, JournalPane } from './views/JournalPane'
+import { DatePickerHost } from './components/DatePicker'
+import { isDailyTitle } from './lib/links'
 
 type Theme = 'system' | 'light' | 'dark'
 const applyTheme = (t: Theme) => { if (t === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t }
@@ -34,6 +37,7 @@ export function placeDuplicate(panes: string[], i: number, title: string, max = 
 }
 
 const titleFromHash = () => {
+  if (location.hash === '#/journal') return JOURNAL
   const m = /^#\/page\/(.+)$/.exec(location.hash)
   return m ? decodeURIComponent(m[1]) : null
 }
@@ -49,11 +53,14 @@ export default function App() {
 function Workspace({ email }: { email: string }) {
   const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish } = useStore()
   // open pages, left to right; the first is the "main" one the sidebar controls
-  // a fresh start opens today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
+  // a fresh start opens the journal at today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
   const [panes, setPanes] = useState<string[]>(() => {
     try { const s = JSON.parse(sessionStorage.getItem('sj-panes') ?? 'null'); if (Array.isArray(s) && s.length && s.every(t => typeof t === 'string')) return s } catch { /* none saved */ }
-    return [todayTitle()]
+    return [JOURNAL]
   })
+  // where the journal should scroll to (n changes to ask again for the same day)
+  const [journalFocus, setJournalFocus] = useState({ date: todayTitle(), n: 0 })
+  const journalDays = useRef<string[]>([])
   useEffect(() => { try { sessionStorage.setItem('sj-panes', JSON.stringify(panes)) } catch { /* private mode */ } }, [panes])
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 800px)').matches)
   const [sidebar, setSidebar] = useState(() => localStorage.getItem('sidebar') !== '0')
@@ -96,7 +103,7 @@ function Workspace({ email }: { email: string }) {
   // hash ↔ main page (back button works)
   const main = panes[0]
   useEffect(() => {
-    const want = '#/page/' + encodeURIComponent(main)
+    const want = main === JOURNAL ? '#/journal' : '#/page/' + encodeURIComponent(main)
     if (location.hash !== want) history.pushState(null, '', want)
   }, [main])
   useEffect(() => {
@@ -117,6 +124,11 @@ function Workspace({ email }: { email: string }) {
   }, [])
 
   const openMain = useCallback((title: string) => {
+    // a day opens in the journal, scrolled to it
+    if (isDailyTitle(title) || title === JOURNAL) {
+      setJournalFocus(f => ({ date: title === JOURNAL ? todayTitle() : title, n: f.n + 1 }))
+      title = JOURNAL
+    }
     setPanes([title]); setFocusLast(false)
     if (narrow) setSidebar(false)
   }, [narrow])
@@ -141,7 +153,7 @@ function Workspace({ email }: { email: string }) {
   useEffect(() => {
     if (!vault) return
     if (prevVault.current && prevVault.current !== vault.id) {
-      setPanes([openAfterSwitch.current ?? todayTitle()])
+      setPanes([openAfterSwitch.current ?? JOURNAL])
       setFocusLast(false)
     }
     openAfterSwitch.current = null
@@ -200,7 +212,7 @@ function Workspace({ email }: { email: string }) {
 
   // time spent: every saved note on screen accrues while you're active (see lib/activeTime)
   const onScreen = useRef<string[]>([])
-  onScreen.current = visible.map(t => getPage(t)).filter(p => p && !p.local).map(p => p!.id)
+  onScreen.current = visible.flatMap(t => (t === JOURNAL ? journalDays.current : [t])).map(t => getPage(t)).filter(p => p && !p.local).map(p => p!.id)
   useEffect(() => startActiveTime(() => onScreen.current, addTime), [addTime])
 
   return (
@@ -257,6 +269,11 @@ function Workspace({ email }: { email: string }) {
             <div className="panes" data-count={visible.length}>
               {visible.map(title => {
                 const i = panes.indexOf(title)
+                if (title === JOURNAL) return (
+                  <JournalPane key={JOURNAL} focus={journalFocus} comments={!narrow && visible.length === 1 && !showCanvas}
+                    onOpenLink={t => openBeside(i, t, false)} onOpenInVault={openInVault} onDuplicate={t => openDuplicate(i, t)}
+                    onVisible={d => { journalDays.current = d }} />
+                )
                 return (
                   <PagePane
                     key={title}
@@ -278,6 +295,7 @@ function Workspace({ email }: { email: string }) {
           } />
       </div>
       {publishing && vault && <PublishDialog vault={vault} onClose={() => setPublishing(false)} />}
+      <DatePickerHost />
     </div>
   )
 }

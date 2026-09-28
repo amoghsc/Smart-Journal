@@ -50,3 +50,17 @@ export interface CanvasItem {
 }
 
 export type ViewMode = 'editor' | 'split' | 'canvas'
+
+/** An AI tool someone made for themselves (✨ menu, "My tools"). */
+export interface AiTool {
+  id: string
+  name: string
+  /** When it's offered: on a single word, within one sentence/line, or on any selection. */
+  scope: 'word' | 'sentence' | 'any'
+  /** What happens with the result. */
+  output: 'replace' | 'after' | 'choose' | 'comment'
+  /** The instructions Gemini follows. */
+  prompt: string
+  creativity: 'precise' | 'balanced' | 'creative'
+  sort_order: number
+}

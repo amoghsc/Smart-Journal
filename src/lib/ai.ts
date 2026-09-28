@@ -1,5 +1,6 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { supabase } from './supabase'
+import type { AiTool } from './types'
 
 /**
  * AI tools run in the nt-ai edge function, which holds the Gemini key. Only the selected text is sent.
@@ -10,6 +11,7 @@ import { supabase } from './supabase'
 export type AiTaskId = 'synonyms' | 'grammar' | 'shorten' | 'summarise' | 'expand'
   | 'formal' | 'friendly' | 'genz' | 'simpler' | 'funny' | 'emotional' | 'sarcastic'
   | 'translate' | 'elaborate' | 'metaphors' | 'examples' | 'story' | 'structure' | 'forAgainst'
+  | 'custom'
 
 export interface AiTask {
   id: AiTaskId
@@ -22,9 +24,11 @@ export interface AiTask {
    * replace: the result takes the selection's place. after: the result is added below it.
    * choose: the result is a list of options; picking one replaces the selection (keeping its formatting).
    */
-  mode: 'replace' | 'after' | 'choose'
+  mode: 'replace' | 'after' | 'choose' | 'comment'
   /** Only offered when the selection is a single word. */
   wordOnly?: boolean
+  /** A tool someone made (then id is 'custom'). */
+  tool?: AiTool
   /** For 'after' results: a short italic label above them, so they don't run into the text before. */
   heading?: string
   /** Menu section; sections are separated by a line. */
@@ -86,7 +90,19 @@ export function translateTargets(from: Lang | null): Lang[] {
 }
 
 /** Extra details a task needs: the passage's main language, and for translate the target. */
-export interface AiOpts { lang?: Lang | null; target?: Lang }
+export interface AiOpts { lang?: Lang | null; target?: Lang; tool?: ToolDef }
+
+/** What the server needs to run a tool someone made. */
+export type ToolDef = Pick<AiTool, 'name' | 'scope' | 'output' | 'prompt' | 'creativity'>
+export const toolDef = (t: ToolDef): ToolDef => ({ name: t.name, scope: t.scope, output: t.output, prompt: t.prompt, creativity: t.creativity })
+
+/** A tool someone made, as a menu task (it runs through the same steps as the built-in ones). */
+export function toolTask(t: AiTool): AiTask & { tool: AiTool } {
+  return {
+    id: 'custom', label: t.name, busy: `${t.name}…`, result: t.name.toLowerCase(), mode: t.output,
+    wordOnly: t.scope === 'word', heading: t.output === 'after' ? t.name : undefined, group: 100, tool: t,
+  }
+}
 
 async function readError(error: unknown): Promise<Error> {
   const ctx = (error as { context?: Response }).context
@@ -254,12 +270,13 @@ export function wordInContext(doc: PMNode, from: number, word: string): string {
 }
 
 /** One option per line → clean, distinct choices (never the word itself), capitalised like the original. */
-export function parseChoices(raw: string, word: string, max = 8): string[] {
+export function parseChoices(raw: string, word: string, max = 8, { maxLen = 40, linesOnly = false } = {}): string[] {
   const seen = new Set([word.toLowerCase()])
   const out: string[] = []
-  for (let line of raw.split(/\n|,|;/)) {
+  // (a tool someone made may offer phrases with commas in them: those are split on lines only)
+  for (let line of raw.split(linesOnly ? /\n/ : /\n|,|;/)) {
     line = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/^["“'‘]+|["”'’.。।]+$/g, '').trim()
-    if (!line || line.length > 40) continue
+    if (!line || line.length > maxLen) continue
     const k = line.toLowerCase()
     if (seen.has(k)) continue
     seen.add(k)

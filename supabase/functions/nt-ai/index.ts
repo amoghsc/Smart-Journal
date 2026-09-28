@@ -109,6 +109,33 @@ const TASKS: Record<string, string> = {
 
 const WORD_TASKS = new Set(['synonyms'])
 
+// ---- tools people make themselves ----------------------------------------------------------------------------
+interface Tool { name: string; scope: 'word' | 'sentence' | 'any'; output: 'replace' | 'after' | 'choose' | 'comment'; prompt: string; creativity: 'precise' | 'balanced' | 'creative' }
+const CREATIVITY: Record<Tool['creativity'], number> = { precise: 0.2, balanced: 0.6, creative: 1.0 }
+
+/** A tool as sent by the app, checked: known choices only, a short name, instructions of at most 2,000 characters. */
+function readTool(v: unknown): Tool {
+  const t = (v ?? {}) as Record<string, unknown>
+  const one = <T extends string>(x: unknown, ok: readonly T[]): T => { if (!ok.includes(x as T)) throw new HttpError(400, 'That AI tool isn’t set up correctly'); return x as T }
+  const name = typeof t.name === 'string' ? t.name.trim().slice(0, 60) : ''
+  const prompt = typeof t.prompt === 'string' ? t.prompt.trim() : ''
+  if (!name || !prompt) throw new HttpError(400, 'The tool needs a name and instructions')
+  if (prompt.length > 2000) throw new HttpError(413, 'The tool’s instructions are too long (2,000 characters at most)')
+  return { name, prompt, scope: one(t.scope, ['word', 'sentence', 'any'] as const), output: one(t.output, ['replace', 'after', 'choose', 'comment'] as const), creativity: one(t.creativity, ['precise', 'balanced', 'creative'] as const) }
+}
+
+/** The user's instructions, with the same house rules as the built-in tools, shaped for where the result goes. */
+function toolPrompt(t: Tool, lang: unknown): string {
+  const base = `The user made this writing tool for their own notes, called "${t.name}". Their instructions for it, between <<< and >>>:\n<<<\n${t.prompt}\n>>>\nFollow those instructions on the passage.` +
+    (t.scope === 'word' ? ' The input gives one word and the sentence it appears in; the tool works on that word.' : '')
+  switch (t.output) {
+    case 'replace': return base + ' Your output replaces the passage in their note.' + COMMON + languageRule(lang)
+    case 'after': return base + ' Your output is added below the passage in their note, so do not repeat the passage.' + COMMON + languageRule(lang)
+    case 'choose': return base + ' Give up to 8 short options, one per line and nothing else — no numbering, bullets, quotation marks or explanations.' + languageRule(lang)
+    case 'comment': return base + ' Your answer is shown as a comment beside the passage: at most about 80 words of plain text, with no headings, lists or preamble.' + languageRule(lang)
+  }
+}
+
 // how adventurous the wording may be: cautious for corrections, freer for creative rewrites
 const TEMPERATURE: Record<string, number> = { examples: 0.8, sarcastic: 0.9, translate: 0.2, story: 0.9, structure: 0.5, forAgainst: 0.6, formal: 0.3, friendly: 0.6, casual: 0.6, genz: 0.8, elaborate: 0.7, synonyms: 0.5, grammar: 0.1, shorten: 0.3, summarise: 0.3, expand: 0.6, simpler: 0.4, funny: 0.9, emotional: 0.8, metaphors: 0.9 }
 
@@ -224,15 +251,24 @@ Deno.serve(async (req: Request) => {
     }
 
     // word-level tasks have their own output format; the shared rules are for rewriting passages
-    const prompt = Object.hasOwn(TASKS, body.task) ? TASKS[body.task] : undefined
-    if (!prompt) throw new HttpError(400, 'Unknown task')
-    let system: string
-    if (body.task === 'translate') {
-      const target = Object.hasOwn(LANG_NAMES, body.target) ? LANG_NAMES[body.target] : null
-      if (!target) throw new HttpError(400, 'Pick a language to translate into')
-      system = prompt.replace('{target}', target) + COMMON + ` Write the whole result in ${target}${target === 'English' ? '' : ', in Devanagari script'}.`
+    let system: string, temperature: number, canCompare = true
+    if (body.task === 'custom') {
+      // a tool the user made: their instructions, with the same house rules
+      const tool = readTool(body.tool)
+      system = toolPrompt(tool, body.lang)
+      temperature = CREATIVITY[tool.creativity]
+      canCompare = tool.output === 'replace' || tool.output === 'after'
     } else {
-      system = WORD_TASKS.has(body.task) ? prompt : prompt + COMMON + languageRule(body.lang)
+      const prompt = Object.hasOwn(TASKS, body.task) ? TASKS[body.task] : undefined
+      if (!prompt) throw new HttpError(400, 'Unknown task')
+      temperature = TEMPERATURE[body.task] ?? 0.4
+      if (body.task === 'translate') {
+        const target = Object.hasOwn(LANG_NAMES, body.target) ? LANG_NAMES[body.target] : null
+        if (!target) throw new HttpError(400, 'Pick a language to translate into')
+        system = prompt.replace('{target}', target) + COMMON + ` Write the whole result in ${target}${target === 'English' ? '' : ', in Devanagari script'}.`
+      } else {
+        system = WORD_TASKS.has(body.task) ? prompt : prompt + COMMON + languageRule(body.lang)
+      }
     }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (!text) throw new HttpError(400, 'Select some text first')
@@ -240,11 +276,10 @@ Deno.serve(async (req: Request) => {
 
     const main = Deno.env.get('GEMINI_MODEL') || 'gemini-3.6-flash'
     const models = [main, ...(Deno.env.get('GEMINI_FALLBACKS') || 'gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map(s => s.trim()).filter(m => m && m !== main)]
-    const temperature = TEMPERATURE[body.task] ?? 0.4
 
     // Two versions to choose from: run twice in parallel, the second a little more adventurous.
     // Duplicates are dropped; if one call fails the other still counts.
-    const variants = body.variants === 2 && !WORD_TASKS.has(body.task) ? 2 : 1
+    const variants = body.variants === 2 && canCompare && !WORD_TASKS.has(body.task) ? 2 : 1
     const temps = variants === 2 ? [temperature, Math.min(1.3, temperature + 0.35)] : [temperature]
     const settled = await Promise.allSettled(temps.map(t => gemini(geminiKey, models, system, text, t)))
     const ok = settled.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])

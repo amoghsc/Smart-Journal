@@ -6,6 +6,7 @@ import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
 import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
 import { SwitchRow } from './components/Switch'
+import { AiToolsDialog } from './components/AiToolEditor'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
@@ -51,7 +52,8 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish } = useStore()
+  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish, aiTools } = useStore()
+  const [toolsOpen, setToolsOpen] = useState(false)
   // open pages, left to right; the first is the "main" one the sidebar controls
   // a fresh start opens the journal at today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
   const [panes, setPanes] = useState<string[]>(() => {
@@ -251,6 +253,8 @@ function Workspace({ email }: { email: string }) {
               hint="Beside AI-written text, show how much of it is still the AI's (%)" />
             <SwitchRow label="Nudge typing over AI initially" on={writeFirst} disabled={!aiOn} onChange={on => { setAiWriteFirst(on); setWriteFirst(on) }}
               hint={`The AI tools open in a note once you've typed ${WRITE_FIRST_WORDS} words of your own in it (pasted and AI-written text don't count)`} />
+            <button className={'menu-row' + (aiOn ? '' : ' disabled')} disabled={!aiOn} onClick={() => { setToolsOpen(true); setMenu(false) }}
+              title="Make your own AI tools for the ✨ menu"><span>My AI tools</span><span className="menu-value">{aiTools.length || 'Add'}</span></button>
             <div className="menu-sep" />
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
@@ -296,6 +300,7 @@ function Workspace({ email }: { email: string }) {
       </div>
       {publishing && vault && <PublishDialog vault={vault} onClose={() => setPublishing(false)} />}
       <DatePickerHost />
+      {toolsOpen && <AiToolsDialog onClose={() => setToolsOpen(false)} />}
     </div>
   )
 }

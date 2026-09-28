@@ -5,11 +5,13 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import type { Fragment, Slice } from '@tiptap/pm/model'
-import { Bold, Check, ChevronRight, SquareSplitHorizontal, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
-import { AI_TASKS, LANGS, aiStatus, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
+import { Bold, Check, ChevronRight, SquareSplitHorizontal, WandSparkles, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
+import { AI_TASKS, LANGS, aiStatus, toolDef, toolTask, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { NoteSearch } from '../lib/noteSearch'
+import { useStore } from '../lib/store'
+import { AiToolEditor } from './AiToolEditor'
 import { cleanPastedHtml, plainTextSlice } from '../lib/paste'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
@@ -159,7 +161,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const translateTimer = useRef<number | null>(null)
   const [aiBusy, setAiBusy] = useState<AiTask | null>(null)
   // options from a 'choose' task (similar words), waiting for a pick
-  const [choices, setChoices] = useState<{ word: string; from: number; to: number; options: string[] } | null>(null)
+  const [choices, setChoices] = useState<{ word: string; label: string; from: number; to: number; options: string[] } | null>(null)
   // AI versions shown in the note, one under the other, until one is picked; the note is untouched meanwhile.
   // `result` names them for the hover label; `picked` is set while the chosen one settles in.
   // While they show, the note is locked: nothing else can be selected, edited or run until you pick one or undo.
@@ -454,12 +456,12 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const text = task.wordOnly ? wordInContext(editor.state.doc, from, word!) : plan.text
     if (!text.trim()) return
     const docBefore = editor.state.doc
-    const opts = { lang: detectLanguage(text), target }
+    const opts = { lang: detectLanguage(text), target, tool: task.tool ? toolDef(task.tool) : undefined }
     const result = target ? `translated to ${LANGS[target]}` : task.result
     flags.current.aiBusy = true
     setAiBusy(target ? { ...task, busy: `Translating to ${LANGS[target]}…` } : task)
     try {
-      if (task.mode !== 'choose' && aiTwoVersions()) {
+      if (task.mode !== 'choose' && task.mode !== 'comment' && aiTwoVersions()) {
         const outs = await runAiOptions(task.id, text, opts)
         flags.current.aiBusy = false
         if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
@@ -481,9 +483,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       flags.current.aiBusy = false
       if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
       if (task.mode === 'choose') {
-        const options = parseChoices(out, word ?? '')
-        if (!options.length) { toast('No similar words found'); return }
-        setChoices({ word: word ?? '', from, to, options })
+        // a tool someone made may offer longer phrases than similar words do
+        const options = task.tool ? parseChoices(out, word ?? '', 8, { maxLen: 120, linesOnly: true }) : parseChoices(out, word ?? '')
+        if (!options.length) { toast(task.tool ? `${task.label}: nothing came back` : 'No similar words found'); return }
+        setChoices({ word: word ?? '', label: task.tool ? task.label : `Similar to “${word}”`, from, to, options })
+        return
+      }
+      if (task.mode === 'comment') {
+        // pinned beside the text as a comment; the text itself stays as it is
+        const id = crypto.randomUUID()
+        editor.chain().focus().setTextSelection({ from, to }).setComment(id).updateComment(id, `✦ ${task.label}: ${out.trim()}`).setTextSelection(to).run()
+        toast(`${task.label}: added as a comment`, comments ? undefined : 'Comments show beside the note when one note is open')
+        setAiMode(false)
         return
       }
       applyFresh(plan.from, plan.to, resultContent(editor.schema, plan, out, task.heading), plan.to > plan.from ? editor.state.doc.slice(plan.from, plan.to) : null, task.id)
@@ -603,6 +614,17 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     if (g) g[1].push(t); else acc.push([t.group, [t]])
     return acc
   }, [])
+  // tools this person made, offered when the selection suits them (a word, one line, or anything)
+  const { aiTools } = useStore()
+  const sel = editor?.state.selection
+  const oneLine = !!sel && !sel.empty && sel.$from.sameParent(sel.$to) && sel.$from.parent.isTextblock
+  const myTools = aiTools.filter(t => (t.scope === 'word' ? !!active?.word : t.scope === 'sentence' ? oneLine : true))
+  const [toolEditor, setToolEditor] = useState<{ sample: string } | null>(null)
+  const openToolEditor = () => {
+    const text = editor && sel && !sel.empty ? selectionToText(editor.state.doc, sel.from, sel.to) : ''
+    setToolEditor({ sample: text.slice(0, 2000) })
+    setAiMode(false)
+  }
   // translate offers the two languages the selection isn't in
   const targets = translateAt && editor
     ? translateTargets(detectLanguage(selectionToText(editor.state.doc, editor.state.selection.from, editor.state.selection.to)))
@@ -624,9 +646,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           {aiBusy ? (
             <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
           ) : choices ? (
-            <div className="ai-menu ai-choices" role="menu" aria-label={`Similar to ${choices.word}`}>
+            <div className="ai-menu ai-choices" role="menu" aria-label={choices.label}>
               <div className="ai-menu-head">
-                <Sparkles size={13} /> Similar to “{choices.word}”
+                <Sparkles size={13} /> {choices.label}
                 <button title="Back" aria-label="Back" onMouseDown={keep} onClick={() => setChoices(null)}><X size={13} /></button>
               </div>
               <div className="ai-chips">
@@ -655,6 +677,20 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
                   ))}
                 </div>
               ))}
+              {myTools.length > 0 && (
+                <div className="ai-group ai-mine">
+                  {myTools.map(t => (
+                    <button key={t.id} role="menuitem" className="ai-item custom" onMouseDown={keep} onClick={() => runTask(toolTask(t))} title={t.prompt}>
+                      <span className="ai-custom-name"><WandSparkles size={12} /> {t.name}</span>
+                      {t.output === 'after' && <span className="ai-note">adds below</span>}
+                      {t.output === 'comment' && <span className="ai-note">comment</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="ai-group">
+                <button role="menuitem" className="ai-item ai-new" onMouseDown={keep} onClick={openToolEditor}><span className="ai-custom-name"><Plus size={12} /> New AI tool</span></button>
+              </div>
             </div>
           ) : linkMode ? (
             <div className="bubble-row bubble-link">
@@ -750,6 +786,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         </div>,
         document.body,
       )}
+      {toolEditor && <AiToolEditor sample={toolEditor.sample} onClose={() => setToolEditor(null)} />}
       {hoverLink && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
           <button title="Open this note on the side" onMouseDown={e => e.preventDefault()}

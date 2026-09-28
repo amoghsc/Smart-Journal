@@ -623,3 +623,36 @@ p.small { margin: 0; line-height: 1.45; }
 .cal-day.chosen .cal-dot { background: #fff; }
 .cal-foot { display: flex; justify-content: center; padding-top: 6px; }
 .cal-foot .link { font-size: 13px; }
+
+
+/* ---- AI tools people make ---- */
+.bubble .ai-item.custom { color: #7c3aed !important; }
+:root[data-theme="dark"] .bubble .ai-item.custom { color: #b69cff !important; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bubble .ai-item.custom { color: #b69cff !important; } }
+.ai-mine { background: rgba(139, 92, 246, 0.06); border-radius: 6px; }
+.ai-custom-name { display: inline-flex; align-items: center; gap: 6px; }
+.bubble .ai-item.ai-new { color: var(--muted) !important; }
+.menu button.menu-row.disabled, .menu button.menu-row:disabled { opacity: 0.4; cursor: default; background: none; }
+.modal.tool-editor { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.modal.tool-list { width: min(520px, calc(100vw - 24px)); }
+.tool-body { overflow: auto; padding: 4px 18px 8px; display: flex; flex-direction: column; gap: 12px; }
+.tool-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tool-examples .ai-chip { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line); background: var(--bg2); font-size: 12.5px; }
+.tool-examples .ai-chip:hover { border-color: #8b5cf6; }
+.tool-field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+.tool-field em { font-style: normal; font-weight: 400; }
+.tool-field input, .tool-field textarea { font: inherit; font-weight: 400; font-size: 14px; padding: 7px 9px; border-radius: 7px; resize: vertical; }
+.tool-seg { width: 100%; }
+.tool-seg button { font-weight: 500; }
+.tool-try { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 9px; background: var(--bg2); }
+.tool-try .tool-field { width: 100%; }
+.tool-result { width: 100%; padding: 8px 10px; border-radius: 7px; background: rgba(139, 92, 246, 0.08); font-size: 14px; }
+.tool-result-text { white-space: pre-wrap; line-height: 1.5; }
+.tool-result .ai-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line); background: var(--bg); font-size: 13px; }
+.tool-actions { display: flex; align-items: center; gap: 8px; padding: 10px 18px 14px; border-top: 1px solid var(--line); }
+.tool-actions .spacer, .tool-rows .spacer { flex: 1; }
+.btn.danger { color: var(--bad); }
+.tool-intro { margin: 0 18px 8px; }
+.tool-rows { list-style: none; margin: 0; padding: 0 12px 10px; max-height: 50vh; overflow: auto; }
+.tool-rows li { display: flex; align-items: center; gap: 8px; padding: 6px 6px; border-bottom: 1px solid var(--line); }
+.tool-row-name { font-weight: 600; font-size: 14px; }

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { openedFromReset, supabase } from './supabase'
-import type { CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
+import type { AiTool, CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
 
@@ -15,6 +15,11 @@ interface Store {
   endRecovery: () => void
   /** May publish to the GitHub garden (only its owner). */
   canPublish: boolean
+  /** AI tools this person made, in menu order. */
+  aiTools: AiTool[]
+  saveAiTool: (tool: Omit<AiTool, 'id' | 'sort_order'> & { id?: string }) => Promise<AiTool>
+  deleteAiTool: (id: string) => Promise<void>
+  moveAiTool: (id: string, by: -1 | 1) => Promise<void>
   /** Every page in every vault. */
   allPages: Page[]
   /** Pages in the current vault. */
@@ -73,6 +78,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [recovering, setRecovering] = useState(openedFromReset)
   const endRecovery = useCallback(() => setRecovering(false), [])
   const [canPublish, setCanPublish] = useState(false)
+  const [aiTools, setAiTools] = useState<AiTool[]>([])
   const seeding = useRef(false)
   const [allPages, setAllPages] = useState<Page[]>([])
   const [vaults, setVaults] = useState<Vault[]>([])
@@ -119,9 +125,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); return }
+    if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); setAiTools([]); return }
     reload()
     supabase.from('nt_members').select('can_publish').maybeSingle().then(({ data }) => setCanPublish(!!data?.can_publish))
+    supabase.from('nt_ai_tools').select('id,name,scope,output,prompt,creativity,sort_order').order('sort_order').order('created_at')
+      .then(({ data, error }) => { if (error) console.warn('AI tools not loaded', error.message); else setAiTools((data ?? []) as AiTool[]) })
     const onVis = () => { if (document.visibilityState === 'visible') reload(); else flushAll() }
     document.addEventListener('visibilitychange', onVis)
     window.addEventListener('pagehide', flushAll)
@@ -397,6 +405,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (p && typeof data === 'number') upsertLocal({ ...p, typed_words: data })
   }, [])
 
+  // ---- AI tools people make ----
+  const saveAiTool = useCallback(async (tool: Omit<AiTool, 'id' | 'sort_order'> & { id?: string }) => {
+    const fields = { name: tool.name.trim(), scope: tool.scope, output: tool.output, prompt: tool.prompt.trim(), creativity: tool.creativity, updated_at: new Date().toISOString() }
+    const { data, error } = tool.id
+      ? await supabase.from('nt_ai_tools').update(fields).eq('id', tool.id).select('id,name,scope,output,prompt,creativity,sort_order').single()
+      : await supabase.from('nt_ai_tools').insert({ ...fields, sort_order: aiTools.length }).select('id,name,scope,output,prompt,creativity,sort_order').single()
+    if (error) throw error
+    const saved = data as AiTool
+    setAiTools(ts => (tool.id ? ts.map(t => (t.id === saved.id ? saved : t)) : [...ts, saved]))
+    return saved
+  }, [aiTools.length])
+  const deleteAiTool = useCallback(async (id: string) => {
+    const { error } = await supabase.from('nt_ai_tools').delete().eq('id', id)
+    if (error) throw error
+    setAiTools(ts => ts.filter(t => t.id !== id))
+  }, [])
+  const moveAiTool = useCallback(async (id: string, by: -1 | 1) => {
+    const list = [...aiTools], i = list.findIndex(t => t.id === id), j = i + by
+    if (i < 0 || j < 0 || j >= list.length) return
+    ;[list[i], list[j]] = [list[j], list[i]]
+    const ordered = list.map((t, k) => ({ ...t, sort_order: k }))
+    setAiTools(ordered)
+    await Promise.all([ordered[i], ordered[j]].map(t => supabase.from('nt_ai_tools').update({ sort_order: t.sort_order }).eq('id', t.id)))
+  }, [aiTools])
+
   // ---- vaults ----
   const createVault = useCallback(async (name: string, kind: VaultKind) => {
     const v: Vault = {
@@ -459,7 +492,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value: Store = {
-    session, ready, recovering, endRecovery, canPublish, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
+    session, ready, recovering, endRecovery, canPublish, aiTools, saveAiTool, deleteAiTool, moveAiTool, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, duplicatePage, addTime, addWords,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }

@@ -55,6 +55,12 @@ interface Props {
 }
 
 const LONG_PRESS_MS = 550
+/**
+ * Where the selection menu lives: the page's top layer, not inside the note. In the journal each day is its own
+ * section, and a menu inside one would be drawn under the next day. (One function for good: a new one each render
+ * would make the menu re-send its options to the editor every render.)
+ */
+const menuLayer = () => document.body
 /** How long the versions you didn't pick take to fade away (keep in step with .ai-option.gone in index.css). */
 const OPTION_OUT_MS = 280
 
@@ -661,7 +667,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   return (
     <>
       {editor && (
-        <BubbleMenu editor={editor} pluginKey={bubbleKey} className="bubble"
+        <BubbleMenu editor={editor} pluginKey={bubbleKey} className="bubble" appendTo={menuLayer}
           shouldShow={shouldShowBubble}>
           {aiBusy ? (
             <div className="bubble-row bubble-ai"><span className="ai-busy"><Loader2 size={14} className="spin" /> {aiBusy.busy}</span></div>
@@ -736,7 +742,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         </BubbleMenu>
       )}
       <EditorContent editor={editor} className="note-wrap" />
-      {suggest && suggest.items.length > 0 && suggestStyle && (
+      {suggest && suggest.items.length > 0 && suggestStyle && createPortal(
         <ul className={'suggest' + (suggest.items[0].prompt ? ' prompts' : '')} style={suggestStyle} role="listbox" aria-label={suggest.items[0].prompt ? 'Journaling prompts' : 'Link a note'}>
           {suggest.items[0].prompt && <li className="suggest-head" aria-hidden>Journaling prompts</li>}
           {suggest.items.map((it, i) => (
@@ -746,7 +752,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               {it.create ? <><Plus size={13} /> New note “{it.title}”</> : it.prompt ? it.title : label(it.title)}
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body,
       )}
       {compare && compareDom.current && createPortal(
         <div className={'ai-compare' + (compare.picked !== undefined ? ' picking' : '')} role="group" aria-label={`AI: ${compare.result} — pick a version, or undo`}>

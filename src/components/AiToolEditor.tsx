@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2, WandSparkles, X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { detectLanguage, parseChoices, runAi, toolDef } from '../lib/ai'
+import { detectLanguage, parseChoices, runAi, toolDef, toolTokens } from '../lib/ai'
+import { aiTwoVersions } from '../lib/settings'
 import type { AiTool } from '../lib/types'
 
 type Draft = Omit<AiTool, 'id' | 'sort_order'> & { id?: string }
@@ -23,15 +24,15 @@ const STYLES: { id: AiTool['creativity']; label: string }[] = [
 ]
 /** Ready-made starting points. */
 const EXAMPLES: Draft[] = [
-  { name: 'Action items', scope: 'any', output: 'after', creativity: 'precise', prompt: 'List every task, promise or next step in the text as a short checklist item starting with a verb. Leave out anything that is not an action.' },
-  { name: 'Emotional words', scope: 'any', output: 'choose', creativity: 'balanced', prompt: 'Pick out the words and short phrases in the text that carry emotion.' },
-  { name: 'Is this sound?', scope: 'any', output: 'comment', creativity: 'precise', prompt: 'Check whether the reasoning holds up. Name the weakest point or the unstated assumption, briefly and kindly.' },
-  { name: 'Stronger verb', scope: 'word', output: 'choose', creativity: 'balanced', prompt: 'Suggest stronger, more vivid verbs that could replace this one in the sentence.' },
-  { name: 'Key points', scope: 'any', output: 'after', creativity: 'precise', prompt: 'Capture the key points of the text as 3 to 5 short bullet points.' },
-  { name: 'Title ideas', scope: 'any', output: 'choose', creativity: 'creative', prompt: 'Suggest short, catchy titles for this text.' },
+  { name: 'Action items', scope: 'any', output: 'after', creativity: 'precise', single: true, prompt: 'List every task, promise or next step in the text as a short checklist item starting with a verb. Leave out anything that is not an action.' },
+  { name: 'Emotional words', scope: 'any', output: 'choose', creativity: 'balanced', single: true, prompt: 'Pick out the words and short phrases in the text that carry emotion.' },
+  { name: 'Is this sound?', scope: 'any', output: 'comment', creativity: 'precise', single: true, prompt: 'Check whether the reasoning holds up. Name the weakest point or the unstated assumption, briefly and kindly.' },
+  { name: 'Stronger verb', scope: 'word', output: 'choose', creativity: 'balanced', single: true, prompt: 'Suggest stronger, more vivid verbs that could replace this one in the sentence.' },
+  { name: 'Key points', scope: 'any', output: 'after', creativity: 'precise', single: true, prompt: 'Capture the key points of the text as 3 to 5 short bullet points.' },
+  { name: 'Title ideas', scope: 'any', output: 'choose', creativity: 'creative', single: true, prompt: 'Suggest short, catchy titles for this text.' },
 ]
 
-const blank: Draft = { name: '', scope: 'any', output: 'replace', creativity: 'balanced', prompt: '' }
+const blank: Draft = { name: '', scope: 'any', output: 'replace', creativity: 'balanced', single: true, prompt: '' }
 
 function Seg<T extends string>({ value, options, onChange }: { value: T; options: { id: T; label: string; hint?: string }[]; onChange: (v: T) => void }) {
   return (
@@ -90,11 +91,19 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
           </label>
           <div className="tool-field"><span>Works on</span><Seg value={d.scope} options={SCOPES} onChange={v => set('scope', v)} /></div>
           <div className="tool-field"><span>Result</span><Seg value={d.output} options={OUTPUTS} onChange={v => set('output', v)} />
-            <em className="muted small">{OUTPUTS.find(o => o.id === d.output)!.hint}</em></div>
+            <em className="muted small">{OUTPUTS.find(o => o.id === d.output)!.hint}</em>
+            {(d.output === 'replace' || d.output === 'after') && (
+              <label className="tool-check"><input type="checkbox" checked={d.single} onChange={e => set('single', e.target.checked)} />
+                <span>Restrict AI output to a single option <em className="muted">— even when two versions to compare is on</em></span></label>
+            )}
+          </div>
           <label className="tool-field"><span>What should it do? <em className="muted">— your instructions for the AI</em></span>
             <textarea rows={4} maxLength={2000} value={d.prompt} placeholder="e.g. Pick out the words that carry emotion." onChange={e => set('prompt', e.target.value)} />
           </label>
           <div className="tool-field"><span>Style</span><Seg value={d.creativity} options={STYLES} onChange={v => set('creativity', v)} /></div>
+          <p className="tool-cost muted small" title="An estimate: instructions and house rules, a typical selection and a typical answer. Marathi and Hindi use about 2–3× as many tokens.">
+            ≈ {toolTokens(d, aiTwoVersions()).toLocaleString()} Gemini tokens each time you use it
+            {d.scope === 'any' ? ' (on a ~120-word paragraph)' : d.scope === 'sentence' ? ' (on a sentence)' : ' (on a word)'}</p>
 
           <div className="tool-try">
             <label className="tool-field"><span>Try it on</span>
@@ -128,6 +137,7 @@ export function AiToolsDialog({ onClose }: { onClose: () => void }) {
   const { aiTools, moveAiTool, deleteAiTool } = useStore()
   const [editing, setEditing] = useState<AiTool | 'new' | null>(null)
   if (editing) return <AiToolEditor tool={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />
+  const two = aiTwoVersions()
   return createPortal(
     <div className="modal-bg" onMouseDown={onClose}>
       <div className="modal tool-list" role="dialog" aria-label="My AI tools" onMouseDown={e => e.stopPropagation()}>
@@ -135,21 +145,30 @@ export function AiToolsDialog({ onClose }: { onClose: () => void }) {
           <h2><WandSparkles size={16} /> My AI tools</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
-        <p className="muted small tool-intro">Your own tools appear at the bottom of the ✨ menu, just for you.</p>
-        <ul className="tool-rows">
-          {aiTools.map((t, i) => (
-            <li key={t.id}>
-              <span className="tool-row-name">{t.name}</span>
-              <span className="muted small">{SCOPES.find(s => s.id === t.scope)!.label} · {OUTPUTS.find(o => o.id === t.output)!.label}</span>
-              <span className="spacer" />
-              <button className="icon-btn" title="Move up" disabled={i === 0} onClick={() => moveAiTool(t.id, -1)}><ArrowUp size={14} /></button>
-              <button className="icon-btn" title="Move down" disabled={i === aiTools.length - 1} onClick={() => moveAiTool(t.id, 1)}><ArrowDown size={14} /></button>
-              <button className="icon-btn" title="Edit" onClick={() => setEditing(t)}><Pencil size={14} /></button>
-              <button className="icon-btn" title="Delete" onClick={() => { if (confirm(`Delete the AI tool “${t.name}”?`)) deleteAiTool(t.id).catch(e => alert((e as Error).message)) }}><Trash2 size={14} /></button>
-            </li>
-          ))}
-          {aiTools.length === 0 && <li className="muted small">No tools yet.</li>}
-        </ul>
+        <p className="tool-intro">Your own tools, in the ✨ menu just for you. They’re listed here in menu order.</p>
+        {aiTools.length ? (
+          <ul className="tool-rows">
+            {aiTools.map((t, i) => (
+              <li key={t.id} className="tool-row">
+                <button className="tool-row-main" onClick={() => setEditing(t)} title="Edit">
+                  <span className="tool-row-name">{t.name}</span>
+                  <span className="tool-row-meta">
+                    {SCOPES.find(x => x.id === t.scope)!.label} · {OUTPUTS.find(o => o.id === t.output)!.label} · {STYLES.find(x => x.id === t.creativity)!.label} · ≈ {toolTokens(t, two).toLocaleString()} tokens
+                  </span>
+                  <span className="tool-row-prompt">{t.prompt}</span>
+                </button>
+                <span className="tool-row-actions">
+                  <button className="icon-btn" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => moveAiTool(t.id, -1)}><ArrowUp size={15} /></button>
+                  <button className="icon-btn" title="Move down" aria-label="Move down" disabled={i === aiTools.length - 1} onClick={() => moveAiTool(t.id, 1)}><ArrowDown size={15} /></button>
+                  <button className="icon-btn" title="Edit" aria-label="Edit" onClick={() => setEditing(t)}><Pencil size={15} /></button>
+                  <button className="icon-btn" title="Delete" aria-label="Delete" onClick={() => { if (confirm(`Delete the AI tool “${t.name}”?`)) deleteAiTool(t.id).catch(e => alert((e as Error).message)) }}><Trash2 size={15} /></button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="tool-empty"><WandSparkles size={22} /><span>No tools yet. Make one for something you do often — pulling out action items, spotting emotional words, questioning an argument.</span></div>
+        )}
         <div className="tool-actions"><span className="spacer" /><button className="btn primary small" onClick={() => setEditing('new')}><Plus size={14} /> New AI tool</button></div>
       </div>
     </div>,

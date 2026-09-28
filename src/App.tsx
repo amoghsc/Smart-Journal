@@ -4,7 +4,7 @@ import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
-import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
+import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiToolsFirst, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
 import { SwitchRow } from './components/Switch'
 import { AiToolsDialog } from './components/AiToolEditor'
 import { Login } from './views/Login'
@@ -75,6 +75,7 @@ function Workspace({ email }: { email: string }) {
   const [aiScore, setAiScore] = useState(aiScoreOn)
   const [aiOn, setAiOn] = useState(aiFeaturesOn)
   const [writeFirst, setWriteFirst] = useState(aiWriteFirst)
+  const [toolsFirst, setToolsFirst] = useState(aiToolsFirst)
   const [focusLast, setFocusLast] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [closing, setClosing] = useState<string[]>([])
@@ -255,6 +256,8 @@ function Workspace({ email }: { email: string }) {
               hint={`The AI tools open in a note once you've typed ${WRITE_FIRST_WORDS} words of your own in it (pasted and AI-written text don't count)`} />
             <button className={'menu-row' + (aiOn ? '' : ' disabled')} disabled={!aiOn} onClick={() => { setToolsOpen(true); setMenu(false) }}
               title="Make your own AI tools for the ✨ menu"><span>My AI tools</span><span className="menu-value">{aiTools.length || 'Add'}</span></button>
+            <SwitchRow label="Show my AI tools at the top" on={toolsFirst} disabled={!aiOn} onChange={on => { setAiToolsFirst(on); setToolsFirst(on) }}
+              hint="Your own tools above the built-in ones in the ✨ menu (off: at the bottom)" />
             <div className="menu-sep" />
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>

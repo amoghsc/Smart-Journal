@@ -10,12 +10,13 @@ import { AI_TASKS, LANGS, aiStatus, toolDef, toolTask, detectLanguage, parseChoi
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { NoteSearch } from '../lib/noteSearch'
+import { JournalPrompts } from '../lib/journalPrompts'
 import { useStore } from '../lib/store'
 import { AiToolEditor } from './AiToolEditor'
 import { cleanPastedHtml, plainTextSlice } from '../lib/paste'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
-import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiTwoVersions, aiWriteFirst } from '../lib/settings'
+import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -150,9 +151,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   // (and with AI features switched off in settings, nobody does)
   const [aiAllowed, setAiAllowed] = useState(true)
   const [aiOn, setAiOn] = useState(aiFeaturesOn)
+  const [toolsFirst, setToolsFirst] = useState(aiToolsFirst)
   useEffect(() => { aiStatus().then(s => setAiAllowed(s !== 'denied')) }, [])
   useEffect(() => {
-    const on = () => setAiOn(aiFeaturesOn())
+    const on = () => { setAiOn(aiFeaturesOn()); setToolsFirst(aiToolsFirst()) }
     window.addEventListener(SETTINGS_EVENT, on)
     return () => window.removeEventListener(SETTINGS_EVENT, on)
   }, [])
@@ -176,6 +178,21 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const fromProps = (p: SuggestionProps<SuggestItem>, index = 0): SuggestState =>
     ({ items: p.items, index: Math.min(index, Math.max(0, p.items.length - 1)), rect: p.clientRect?.() ?? null, command: p.command })
 
+  // the [[ note picker and the /p prompt picker share one pop-up
+  const suggestRender = () => ({
+    onStart: (p: SuggestionProps<SuggestItem>) => setSuggestBoth(fromProps(p)),
+    onUpdate: (p: SuggestionProps<SuggestItem>) => setSuggestBoth(fromProps(p)),
+    onExit: () => setSuggestBoth(null),
+    onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+      const s = suggestRef.current
+      if (!s || !s.items.length) return false
+      if (event.key === 'ArrowDown') { setSuggestBoth({ ...s, index: (s.index + 1) % s.items.length }); return true }
+      if (event.key === 'ArrowUp') { setSuggestBoth({ ...s, index: (s.index - 1 + s.items.length) % s.items.length }); return true }
+      if (event.key === 'Enter' || event.key === 'Tab') { s.command(s.items[s.index]); return true }
+      return false
+    },
+  })
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -183,7 +200,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         // openOnClick off: its handler would also fire on wikilinks; external links are handled in handleClick below
         link: { openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { rel: 'noopener' } },
       }),
-      Placeholder.configure({ placeholder: 'Write… "- " for bullets, "1. " for numbers, [[ to link a note' }),
+      Placeholder.configure({ placeholder: 'Write… "- " for bullets, "1. " for numbers, [[ to link a note, /p for a journaling prompt' }),
       Highlight,
       Youtube.configure({ nocookie: true, width: 480, height: 270 }),
       Wikilink.configure({ resolve: t => resolve.current(t), onCreate: t => create.current(t), pickDate: a => date.current(a) }),
@@ -194,20 +211,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
           create.current(title)
           editor.chain().focus().insertContentAt(range, [{ type: 'wikilink', attrs: { title } }, { type: 'text', text: ' ' }]).run()
         },
-        render: () => ({
-          onStart: p => setSuggestBoth(fromProps(p)),
-          onUpdate: p => setSuggestBoth(fromProps(p)),
-          onExit: () => setSuggestBoth(null),
-          onKeyDown: ({ event }) => {
-            const s = suggestRef.current
-            if (!s || !s.items.length) return false
-            if (event.key === 'ArrowDown') { setSuggestBoth({ ...s, index: (s.index + 1) % s.items.length }); return true }
-            if (event.key === 'ArrowUp') { setSuggestBoth({ ...s, index: (s.index - 1 + s.items.length) % s.items.length }); return true }
-            if (event.key === 'Enter' || event.key === 'Tab') { s.command(s.items[s.index]); return true }
-            return false
-          },
-        }),
+        render: suggestRender,
       }),
+      // "/p": journaling prompts in the same pop-up; "/pr": a random one
+      JournalPrompts.configure({ render: suggestRender }),
       Comment,
       AiFresh,
       AiText,
@@ -461,7 +468,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     flags.current.aiBusy = true
     setAiBusy(target ? { ...task, busy: `Translating to ${LANGS[target]}…` } : task)
     try {
-      if (task.mode !== 'choose' && task.mode !== 'comment' && aiTwoVersions()) {
+      // (a tool someone made can ask for a single result even when comparing two is on)
+      if (task.mode !== 'choose' && task.mode !== 'comment' && !task.tool?.single && aiTwoVersions()) {
         const outs = await runAiOptions(task.id, text, opts)
         flags.current.aiBusy = false
         if (editor.state.doc !== docBefore) { toast('The note changed while the AI was working', 'Select the text and try again'); return }
@@ -620,6 +628,18 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const oneLine = !!sel && !sel.empty && sel.$from.sameParent(sel.$to) && sel.$from.parent.isTextblock
   const myTools = aiTools.filter(t => (t.scope === 'word' ? !!active?.word : t.scope === 'sentence' ? oneLine : true))
   const [toolEditor, setToolEditor] = useState<{ sample: string } | null>(null)
+  // your tools' section of the menu: at the bottom, or at the top (a setting)
+  const mine = myTools.length > 0 && (
+    <div className="ai-group ai-mine">
+      {myTools.map(t => (
+        <button key={t.id} role="menuitem" className="ai-item custom" onMouseDown={e => e.preventDefault()} onClick={() => runTask(toolTask(t))} title={t.prompt}>
+          <span className="ai-custom-name"><WandSparkles size={12} /> {t.name}</span>
+          {t.output === 'after' && <span className="ai-note">adds below</span>}
+          {t.output === 'comment' && <span className="ai-note">comment</span>}
+        </button>
+      ))}
+    </div>
+  )
   const openToolEditor = () => {
     const text = editor && sel && !sel.empty ? selectionToText(editor.state.doc, sel.from, sel.to) : ''
     setToolEditor({ sample: text.slice(0, 2000) })
@@ -661,6 +681,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
                 <Sparkles size={13} /> AI
                 <button title="Back" aria-label="Back" onMouseDown={keep} onClick={() => setAiMode(false)}><X size={13} /></button>
               </div>
+              {toolsFirst && mine}
               {aiGroups.map(([group, tasks]) => (
                 <div key={group} className="ai-group">
                   {tasks.map(t => t.id === 'translate' ? (
@@ -677,17 +698,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
                   ))}
                 </div>
               ))}
-              {myTools.length > 0 && (
-                <div className="ai-group ai-mine">
-                  {myTools.map(t => (
-                    <button key={t.id} role="menuitem" className="ai-item custom" onMouseDown={keep} onClick={() => runTask(toolTask(t))} title={t.prompt}>
-                      <span className="ai-custom-name"><WandSparkles size={12} /> {t.name}</span>
-                      {t.output === 'after' && <span className="ai-note">adds below</span>}
-                      {t.output === 'comment' && <span className="ai-note">comment</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {!toolsFirst && mine}
               <div className="ai-group">
                 <button role="menuitem" className="ai-item ai-new" onMouseDown={keep} onClick={openToolEditor}><span className="ai-custom-name"><Plus size={12} /> New AI tool</span></button>
               </div>
@@ -726,12 +737,13 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       )}
       <EditorContent editor={editor} className="note-wrap" />
       {suggest && suggest.items.length > 0 && suggestStyle && (
-        <ul className="suggest" style={suggestStyle} role="listbox" aria-label="Link a note">
+        <ul className={'suggest' + (suggest.items[0].prompt ? ' prompts' : '')} style={suggestStyle} role="listbox" aria-label={suggest.items[0].prompt ? 'Journaling prompts' : 'Link a note'}>
+          {suggest.items[0].prompt && <li className="suggest-head" aria-hidden>Journaling prompts</li>}
           {suggest.items.map((it, i) => (
             <li key={(it.create ? '+' : '') + it.title} role="option" aria-selected={i === suggest.index} className={(i === suggest.index ? 'on' : '') + (it.create ? ' create' : '')}
               onMouseDown={e => { e.preventDefault(); suggest.command(it) }}
               onMouseEnter={() => setSuggestBoth({ ...suggest, index: i })}>
-              {it.create ? <><Plus size={13} /> New note “{it.title}”</> : label(it.title)}
+              {it.create ? <><Plus size={13} /> New note “{it.title}”</> : it.prompt ? it.title : label(it.title)}
             </li>
           ))}
         </ul>

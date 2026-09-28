@@ -96,6 +96,20 @@ export interface AiOpts { lang?: Lang | null; target?: Lang; tool?: ToolDef }
 export type ToolDef = Pick<AiTool, 'name' | 'scope' | 'output' | 'prompt' | 'creativity'>
 export const toolDef = (t: ToolDef): ToolDef => ({ name: t.name, scope: t.scope, output: t.output, prompt: t.prompt, creativity: t.creativity })
 
+/**
+ * Roughly how many Gemini tokens one use of a tool takes: the instructions and the house rules sent with them,
+ * a typical selection for its scope (a word and its sentence, a sentence, a paragraph of ~120 words), and a typical
+ * answer for its result. English runs about 4 characters a token; Marathi and Hindi take about 2–3 times as many.
+ */
+export function toolTokens(t: Pick<AiTool, 'scope' | 'output' | 'prompt' | 'single'>, twoVersions: boolean): number {
+  const RULES = 1500   // characters of wrapping and shared rules the server adds
+  const selection = t.scope === 'any' ? 170 : 45
+  const answer = { replace: selection, after: 250, choose: 40, comment: 110 }[t.output]
+  const once = Math.ceil((RULES + t.prompt.length) / 4) + selection + answer
+  const two = twoVersions && !t.single && (t.output === 'replace' || t.output === 'after')
+  return (two ? 2 : 1) * once
+}
+
 /** A tool someone made, as a menu task (it runs through the same steps as the built-in ones). */
 export function toolTask(t: AiTool): AiTask & { tool: AiTool } {
   return {

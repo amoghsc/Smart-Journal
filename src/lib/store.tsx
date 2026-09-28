@@ -128,7 +128,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); setAiTools([]); return }
     reload()
     supabase.from('nt_members').select('can_publish').maybeSingle().then(({ data }) => setCanPublish(!!data?.can_publish))
-    supabase.from('nt_ai_tools').select('id,name,scope,output,prompt,creativity,sort_order').order('sort_order').order('created_at')
+    supabase.from('nt_ai_tools').select('id,name,scope,output,prompt,creativity,single,sort_order').order('sort_order').order('created_at')
       .then(({ data, error }) => { if (error) console.warn('AI tools not loaded', error.message); else setAiTools((data ?? []) as AiTool[]) })
     const onVis = () => { if (document.visibilityState === 'visible') reload(); else flushAll() }
     document.addEventListener('visibilitychange', onVis)
@@ -407,10 +407,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ---- AI tools people make ----
   const saveAiTool = useCallback(async (tool: Omit<AiTool, 'id' | 'sort_order'> & { id?: string }) => {
-    const fields = { name: tool.name.trim(), scope: tool.scope, output: tool.output, prompt: tool.prompt.trim(), creativity: tool.creativity, updated_at: new Date().toISOString() }
+    const fields = { name: tool.name.trim(), scope: tool.scope, output: tool.output, prompt: tool.prompt.trim(), creativity: tool.creativity, single: tool.single, updated_at: new Date().toISOString() }
     const { data, error } = tool.id
-      ? await supabase.from('nt_ai_tools').update(fields).eq('id', tool.id).select('id,name,scope,output,prompt,creativity,sort_order').single()
-      : await supabase.from('nt_ai_tools').insert({ ...fields, sort_order: aiTools.length }).select('id,name,scope,output,prompt,creativity,sort_order').single()
+      ? await supabase.from('nt_ai_tools').update(fields).eq('id', tool.id).select('id,name,scope,output,prompt,creativity,single,sort_order').single()
+      : await supabase.from('nt_ai_tools').insert({ ...fields, sort_order: aiTools.length }).select('id,name,scope,output,prompt,creativity,single,sort_order').single()
     if (error) throw error
     const saved = data as AiTool
     setAiTools(ts => (tool.id ? ts.map(t => (t.id === saved.id ? saved : t)) : [...ts, saved]))

@@ -62,5 +62,7 @@ export interface AiTool {
   /** The instructions Gemini follows. */
   prompt: string
   creativity: 'precise' | 'balanced' | 'creative'
+  /** One result even when two versions to compare is on. */
+  single: boolean
   sort_order: number
 }

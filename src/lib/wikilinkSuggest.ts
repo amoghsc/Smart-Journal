@@ -6,6 +6,8 @@ export interface SuggestItem {
   title: string
   /** Offered when no existing note matches: link to a new note with this title. */
   create?: boolean
+  /** A journaling prompt ("/p"), not a note. */
+  prompt?: boolean
 }
 
 export type WikilinkSuggestOptions = Pick<SuggestionOptions<SuggestItem>, 'items' | 'render' | 'command'>

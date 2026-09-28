@@ -36,3 +36,8 @@ const AI_WRITE_FIRST = 'ai-write-first'
 export const WRITE_FIRST_WORDS = 100
 export const aiWriteFirst = () => { try { return localStorage.getItem(AI_WRITE_FIRST) === '1' } catch { return false } }
 export const setAiWriteFirst = (on: boolean) => setFlag(AI_WRITE_FIRST, on)
+
+// My AI tools first: your own tools above the built-in ones in the ✨ menu (default off: they sit at the bottom)
+const AI_TOOLS_FIRST = 'ai-tools-first'
+export const aiToolsFirst = () => { try { return localStorage.getItem(AI_TOOLS_FIRST) === '1' } catch { return false } }
+export const setAiToolsFirst = (on: boolean) => setFlag(AI_TOOLS_FIRST, on)

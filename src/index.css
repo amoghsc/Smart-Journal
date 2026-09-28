@@ -503,6 +503,12 @@ p.small { margin: 0; line-height: 1.45; }
   background: rgba(139, 92, 246, 0.07); transition: background-color .2s ease, box-shadow .2s ease, opacity .25s ease, max-height .28s ease, padding .28s ease, margin .28s ease; }
 .ai-option:hover, .ai-option:focus-visible { background: rgba(139, 92, 246, 0.12); box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.14); outline: none; }
 .ai-option-body.note { padding: 0; flex: none; font-size: inherit; line-height: 1.6; }
+/* a version reads exactly like the note's own text: same size, same edges (only its tint reaches past them), so
+   picking it doesn't shift a word. (More specific than the note-column padding and the journal day's min-height.) */
+.ai-compare .ai-option > .ai-option-body.note { padding: 0; min-height: 0; }
+/* list versions sit at the list's own indent, bullets hanging in the tint like the note's */
+.ai-compare .ai-option > .ai-option-body > :is(ul, ol):first-child { padding-left: 0; }
+.ai-option:has(> .ai-option-body > :is(ul, ol):first-child) { margin-left: calc(-1.25em - 10px); padding-left: calc(1.25em + 10px); }
 .ai-option-body > :last-child { margin-bottom: 0; }
 /* what it is, shown on hover: "AI: expanded text · Option 1" */
 /* it sits on the option's top edge, so it doesn't cover the words */
@@ -633,7 +639,12 @@ p.small { margin: 0; line-height: 1.45; }
 .ai-custom-name { display: inline-flex; align-items: center; gap: 6px; }
 .bubble .ai-item.ai-new { color: var(--muted) !important; }
 .menu button.menu-row.disabled, .menu button.menu-row:disabled { opacity: 0.4; cursor: default; background: none; }
-.modal.tool-editor { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+/* the form scrolls between a fixed header and fixed buttons, so Save / Cancel are always in reach
+   (the backdrop's 10vh top padding counts: the dialog has to fit under it) */
+.modal.tool-editor { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 10vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
+.modal.tool-editor > .modal-head, .modal.tool-editor > .tool-actions { flex: none; }
+.modal.tool-editor > .tool-body { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+.tool-body > * { flex-shrink: 0; }
 .modal.tool-list { width: min(520px, calc(100vw - 24px)); }
 .tool-body { overflow: auto; padding: 4px 18px 8px; display: flex; flex-direction: column; gap: 12px; }
 .tool-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -667,11 +678,19 @@ p.small { margin: 0; line-height: 1.45; }
 .tool-row-actions .icon-btn { width: 30px; height: 30px; }
 .tool-row-actions .icon-btn:disabled { opacity: 0.3; }
 .tool-empty { margin: 0 16px 14px; padding: 22px 18px; border: 1px dashed var(--line); border-radius: 10px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; font-size: 13px; color: var(--muted); }
-.tool-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; font-weight: 400; font-size: 13px; cursor: pointer; }
-.tool-check input { margin-top: 2px; }
+.tool-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 2px; font-weight: 400; font-size: 13px; line-height: 1.4; cursor: pointer; }
+/* (inputs are full-width by default: a checkbox must not be) */
+.tool-check input { flex: none; width: 14px; height: 14px; margin: 2px 0 0; padding: 0; accent-color: var(--accent); }
 .tool-cost { margin: -4px 0 0; }
 
 /* /p journaling prompts share the [[ pop-up */
 .suggest.prompts { max-width: 400px; max-height: 340px; }
 .suggest .suggest-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 4px 8px 2px; cursor: default; }
 .suggest .suggest-head:hover { background: none; }
+
+/* ---- find across the journal: one bar for every day, marks beside the journal's scrollbar ---- */
+.pane.journal > .note-find { margin-top: 10px; }
+.journal-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* days shown as plain text (away from the screen) are highlighted without touching their HTML */
+::highlight(find-hit) { background-color: rgba(250, 204, 21, 0.4); }
+::highlight(find-current) { background-color: #fbbf24; color: #111; }

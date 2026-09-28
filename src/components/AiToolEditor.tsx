@@ -94,7 +94,7 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
             <em className="muted small">{OUTPUTS.find(o => o.id === d.output)!.hint}</em>
             {(d.output === 'replace' || d.output === 'after') && (
               <label className="tool-check"><input type="checkbox" checked={d.single} onChange={e => set('single', e.target.checked)} />
-                <span>Restrict AI output to a single option <em className="muted">— even when two versions to compare is on</em></span></label>
+                <span>Restrict AI output to a single option <em className="muted">(even with 2 AI text options on)</em></span></label>
             )}
           </div>
           <label className="tool-field"><span>What should it do? <em className="muted">— your instructions for the AI</em></span>

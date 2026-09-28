@@ -24,6 +24,8 @@ export interface FreshEntry {
 type Meta = { add: FreshEntry } | { remove: string } | { expire: true }
 
 export const aiFreshKey = new PluginKey<FreshEntry[]>('aiFresh')
+/** Each highlight's fade offset, fixed when it's first drawn (see the decorations below). */
+const fadeDelay = new Map<string, { style: string; at: number }>()
 // prosemirror-history tags undo/redo transactions under this key. It has to be the string: a second
 // `new PluginKey('history')` would get a different, auto-numbered key and never match.
 const HISTORY_META = 'history$'
@@ -129,13 +131,18 @@ export const AiFresh = Extension.create<object, { timer: ReturnType<typeof setIn
         decorations(state) {
           const entries = aiFreshKey.getState(state)
           if (!entries?.length) return null
+          // The fade offset is worked out once per highlight and then kept. Worked out afresh on every call it differed
+          // every millisecond, and a decoration that differs makes the editor redraw that text — on every click and
+          // arrow key while a highlight lasted, which made the blue selection over it flicker.
           const now = Date.now()
-          return DecorationSet.create(state.doc, entries.map(e => Decoration.inline(e.from, e.to, {
-            class: 'ai-fresh',
-            'data-ai-fresh': e.id,
-            // start the fade part-way through if this decoration is redrawn later
-            style: `animation-delay:-${Math.min(AI_FRESH_MS, now - e.at) / 1000}s`,
-          })))
+          // (shared by every open note, so forgotten only once long faded)
+          for (const [id, d] of fadeDelay) if (now - d.at > 2 * AI_FRESH_MS) fadeDelay.delete(id)
+          return DecorationSet.create(state.doc, entries.map(e => {
+            let d = fadeDelay.get(e.id)
+            // start the fade part-way through if this decoration is first drawn later (a note opened meanwhile)
+            if (!d) { d = { style: `animation-delay:-${Math.min(AI_FRESH_MS, now - e.at) / 1000}s`, at: e.at }; fadeDelay.set(e.id, d) }
+            return Decoration.inline(e.from, e.to, { class: 'ai-fresh', 'data-ai-fresh': e.id, style: d.style })
+          }))
         },
       },
     })]

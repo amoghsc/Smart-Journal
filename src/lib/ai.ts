@@ -144,17 +144,31 @@ export function aiStatus(): Promise<AiStatus> {
   return status
 }
 
+/**
+ * Ask the AI function. Google answers 503 ("overloaded") or 500 when its servers are busy — the function has already
+ * tried the fallback models by then — so wait a moment and ask once more before giving up, and then say so plainly.
+ */
+async function invokeAi(body: Record<string, unknown>): Promise<{ text?: string; texts?: string[] }> {
+  for (let attempt = 0; ; attempt++) {
+    const { data, error } = await supabase.functions.invoke('nt-ai', { body })
+    if (!error) return data ?? {}
+    const e = await readError(error)
+    const busy = /\((?:500|503)\)|overloaded|unavailable/i.test(e.message)
+    if (!busy) throw e
+    if (attempt === 0) { await new Promise(r => setTimeout(r, 1500)); continue }
+    throw new Error('Gemini is busy right now (Google’s servers are overloaded) — try again in a minute')
+  }
+}
+
 /** Two versions to choose between (one if both came out the same). */
 export async function runAiOptions(task: AiTaskId, text: string, opts: AiOpts = {}): Promise<string[]> {
-  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, variants: 2, ...opts } })
-  if (error) throw await readError(error)
+  const data = await invokeAi({ task, text, variants: 2, ...opts })
   const texts = (data?.texts as string[] | undefined) ?? (data?.text ? [data.text as string] : [])
   return texts.filter(t => t && t.trim())
 }
 
 export async function runAi(task: AiTaskId, text: string, opts: AiOpts = {}): Promise<string> {
-  const { data, error } = await supabase.functions.invoke('nt-ai', { body: { task, text, ...opts } })
-  if (error) throw await readError(error)
+  const data = await invokeAi({ task, text, ...opts })
   return (data?.text as string) ?? ''
 }
 

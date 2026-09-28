@@ -13,6 +13,7 @@ import { isDailyTitle, normTitle, prettyDate, shiftDay, todayTitle } from '../li
 import { plainText, wordStats } from '../lib/html'
 import { noteSearchKey, setNoteSearch, setNoteSearchCurrent } from '../lib/noteSearch'
 import { pickDateAt } from '../lib/datePicker'
+import { findRanges, setShownMatches } from '../lib/findText'
 import { sanitize } from '../lib/html'
 
 interface Props {
@@ -30,8 +31,10 @@ interface Props {
   /**
    * One day inside the journal stream: the header sticks while its day scrolls by, the page flows (no scroller of
    * its own), no backlinks. `live`: near the screen, so it's editable; otherwise the text is shown, not edited.
+   * Find works across the whole journal: the search button calls `onFind` (with any selected words), and `find` is
+   * what to highlight here — `current` is this day's current match, or -1 when it's in another day.
    */
-  section?: { live: boolean }
+  section?: { live: boolean; find?: { query: string; current: number }; onFind?: (picked: string) => void }
   onClose?: () => void
   /** Play the exit animation (the parent removes the pane afterwards). */
   closing?: boolean
@@ -134,19 +137,31 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
   const [hits, setHits] = useState<{ count: number; current: number }>({ count: 0, current: -1 })
   const [marks, setMarks] = useState<{ hit: number; top: number; current: boolean }[]>([])
   const findInput = useRef<HTMLInputElement>(null)
-  const openFind = () => {
-    // start from the selected words, if any
+  /** The selected words, if they make a sensible search. */
+  const pickedText = () => {
     const sel = editor?.state.selection
     const picked = sel && !sel.empty ? editor!.state.doc.textBetween(sel.from, sel.to, ' ').trim() : ''
-    if (picked && picked.length <= 60 && !picked.includes('\n')) setQuery(picked)
+    return picked && picked.length <= 60 && !picked.includes('\n') ? picked : ''
+  }
+  const openFind = () => {
+    // start from the selected words, if any
+    const picked = pickedText()
+    if (picked) setQuery(picked)
     setFindOpen(true)
     requestAnimationFrame(() => { findInput.current?.focus(); findInput.current?.select() })
   }
   const closeFind = () => { setFindOpen(false); setQuery(''); editor?.commands.focus() }
+  // in the journal the search is the journal's (one bar for every day); these are plain values, so effects that
+  // use them run only when they really change
+  const sectionQuery = section?.find?.query ?? ''
+  const sectionCurrent = section?.find?.current ?? -1
+  const shownAsText = !!section && !section.live
+  const liveQuery = inSection ? sectionQuery : findOpen ? query : ''
   // search as you type; follow the editor so counts stay right while the note changes
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    setNoteSearch(editor.view, findOpen ? query : '')
+    setNoteSearch(editor.view, liveQuery)
+    if (inSection) setNoteSearchCurrent(editor.view, sectionCurrent)
     // only a real change re-renders (every editor transaction calls this)
     const sync = () => {
       const st = noteSearchKey.getState(editor.state)
@@ -156,7 +171,15 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
     sync()
     editor.on('transaction', sync)
     return () => { editor.off('transaction', sync) }
-  }, [editor, query, findOpen])
+  }, [editor, liveQuery, inSection, sectionCurrent])
+  // a day shown as text (away from the screen): its matches are painted over the text, which stays as it is
+  const textRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = textRef.current
+    if (!shownAsText || !el || !sectionQuery.trim()) return
+    setShownMatches(title, findRanges(el, sectionQuery), sectionCurrent)
+    return () => setShownMatches(title, null)
+  }, [shownAsText, sectionQuery, sectionCurrent, body, title])
   const showHit = (i: number) => {
     if (!editor || !hits.count) return
     setNoteSearchCurrent(editor.view, (i + hits.count) % hits.count)
@@ -265,7 +288,9 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
               {page.draft ? <EyeOff size={16} /> : <Globe size={16} />}
             </button>
           )}
-          {page && <button className={'icon-btn' + (findOpen ? ' on' : '')} title="Find in this note" onClick={() => (findOpen ? closeFind() : openFind())}><Search size={16} /></button>}
+          {page && (section?.onFind
+            ? <button className={'icon-btn' + (sectionQuery ? ' on' : '')} title="Find in all journal notes" onClick={() => section.onFind!(pickedText())}><Search size={16} /></button>
+            : <button className={'icon-btn' + (findOpen ? ' on' : '')} title="Find in this note" onClick={() => (findOpen ? closeFind() : openFind())}><Search size={16} /></button>)}
           {page && !page.local && <button className="icon-btn" title="Duplicate this note (the original stays as it is)" onClick={duplicate} disabled={duplicating}><Copy size={16} /></button>}
           {page && !page.local && vaults.length > 1 && <CopyToVault page={page} onOpenCopy={onOpenInVault} />}
           {comments && <button className="icon-btn" title={showComments ? 'Hide comments' : 'Show comments'} onClick={() => setShowComments(s => !s)}>{showComments ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}</button>}
@@ -299,7 +324,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
       <div ref={scrollRef} className={'pane-scroll' + (showComments ? '' : ' comments-hidden')}>
         {section && !section.live ? (
           // a day away from the screen in the journal: its text, laid out as the editor would, until it comes near
-          <div className="note-wrap"><div className="note static" dangerouslySetInnerHTML={{ __html: sanitize(body) || '<p></p>' }} /></div>
+          <div className="note-wrap"><div ref={textRef} className="note static" dangerouslySetInnerHTML={{ __html: sanitize(body) || '<p></p>' }} /></div>
         ) : <NoteEditor key={title} html={body} onChange={v => setBody(title, v)} onOpenLink={onOpenLink}
           onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
           comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus}

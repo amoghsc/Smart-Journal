@@ -52,7 +52,9 @@ export const NoteSearch = Extension.create({
           if (meta && 'query' in meta) { const hits = find(tr.doc, meta.query); return { query: meta.query, hits, current: hits.length ? 0 : -1 } }
           if (!tr.docChanged || !cur.query) return cur
           const hits = find(tr.doc, cur.query)
-          return { ...cur, hits, current: hits.length ? Math.min(Math.max(cur.current, 0), hits.length - 1) : -1 }
+          // no current match on purpose (in the journal the current one is in another day): keep it that way
+          const none = cur.current < 0 && cur.hits.length > 0
+          return { ...cur, hits, current: hits.length && !none ? Math.min(Math.max(cur.current, 0), hits.length - 1) : -1 }
         },
       },
       props: {

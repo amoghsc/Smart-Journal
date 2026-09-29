@@ -5,18 +5,20 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import type { Fragment, Slice } from '@tiptap/pm/model'
-import { Bold, Check, ChevronRight, Globe, SquareSplitHorizontal, WandSparkles, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
+import { Bold, Check, ChevronRight, Globe, Pencil, RefreshCw, TextCursorInput, SquareSplitHorizontal, WandSparkles, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, LANGS, aiStatus, toolDef, toolTask, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
 import { NoteSearch } from '../lib/noteSearch'
 import { JournalPrompts } from '../lib/journalPrompts'
+import { LinkTitles, fillLinkTitles, fixLinksIn, linkSpans, linkTitlesKey } from '../lib/linkTitles'
+import { getMarkRange } from '@tiptap/core'
 import { useStore } from '../lib/store'
 import { AiToolEditor } from './AiToolEditor'
 import { cleanPastedHtml, plainTextSlice } from '../lib/paste'
 import { PIECE_EVENT, checkMeaning, loadPieces, meaningDue, pieceTexts, recordPiece, scoreFor, type Score } from '../lib/aiScore'
 import { sanitize } from '../lib/html'
-import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst } from '../lib/settings'
+import { SETTINGS_EVENT, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst, linkTitleStyle } from '../lib/settings'
 import { toast } from '../lib/toast'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
@@ -122,7 +124,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
   const typed = useRef(onTyped); typed.current = onTyped
 
   // hover "unlink" affordance (pointer devices) and long-press unlink (touch)
-  const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number } | null>(null)
+  // (web: a link to a website, which gets Refresh title / Show address / Edit instead of Open on the side)
+  const [hoverLink, setHoverLink] = useState<{ el: HTMLElement; x: number; y: number; web?: boolean } | null>(null)
   // text the AI just wrote has an Undo badge pinned to its top-right corner while it is highlighted
   const [undoBadges, setUndoBadges] = useState<{ id: string; x: number; y: number; age: number }[]>([])
   // the purple rule beside AI-written text: one unbroken bar per run of lines, measured from the page
@@ -221,6 +224,8 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       }),
       // "/p": journaling prompts in the same pop-up; "/pr": a random one
       JournalPrompts.configure({ render: suggestRender }),
+      // a pasted or typed web address turns into its page's title (a setting; no AI)
+      LinkTitles.configure({ style: linkTitleStyle }),
       Comment,
       AiFresh,
       AiText,
@@ -258,12 +263,14 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         mouseover: (_view, e) => {
           const target = e.target as HTMLElement
           const el = target.closest<HTMLElement>('a.wikilink')
-          if (el) { clearHide(); const r = el.getBoundingClientRect(); setHoverLink({ el, x: r.left, y: popTop(r) }) }
+          if (el) { clearHide(); const r = el.getBoundingClientRect(); setHoverLink({ el, x: r.left, y: popTop(r) }); return false }
+          const web = target.closest<HTMLElement>('a[href]')
+          if (web) { clearHide(); const r = web.getBoundingClientRect(); setHoverLink({ el: web, x: r.left, y: popTop(r), web: true }) }
           return false
         },
         mouseout: (_view, e) => {
           const target = e.target as HTMLElement
-          if (target.closest('a.wikilink')) scheduleHide()
+          if (target.closest('a.wikilink, a[href]')) scheduleHide()
           return false
         },
         touchstart: (view, e) => {
@@ -432,6 +439,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       strike: e?.isActive('strike') ?? false,
       word: e ? singleWord(e.state.doc, e.state.selection.from, e.state.selection.to) : null,
       link: e?.isActive('link') ?? false,
+      hasLinks: e ? !e.state.selection.empty && e.state.doc.rangeHasMark(e.state.selection.from, e.state.selection.to, e.schema.marks.link) : false,
     }),
   })
 
@@ -448,6 +456,44 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     if (!href) { setLinkErr(true); return }
     editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
     setLinkMode(false)
+  }
+  /** Selection menu: title every link in the selection whose words aren't a title (and clear leftovers around them). */
+  const fixTitles = async () => {
+    if (!editor) return
+    const { from, to } = editor.state.selection
+    editor.chain().setTextSelection(to).run()
+    const n = await fixLinksIn(editor.view, from, to, linkTitleStyle())
+    toast(n ? `Titled ${n} ${n === 1 ? 'link' : 'links'}` : 'No link titles found', n ? '⌘Z to undo' : 'Those pages didn’t give a title, or their links already have words of their own')
+  }
+  /** The link span the hovered element belongs to. */
+  const hoveredSpan = (el: HTMLElement) => {
+    if (!editor) return null
+    let pos: number
+    try { pos = editor.view.posAtDOM(el, 0) } catch { return null }
+    const range = getMarkRange(editor.state.doc.resolve(pos), editor.schema.marks.link)
+    return range ? linkSpans(editor.state.doc, range.from, range.to)[0] ?? null : null
+  }
+  const refreshTitle = async (el: HTMLElement) => {
+    const span = hoveredSpan(el)
+    setHoverLink(null)
+    if (!span || !editor) return
+    const n = await fillLinkTitles(editor.view, [span], linkTitleStyle() === 'off' ? 'full' : linkTitleStyle(), true)
+    if (!n) toast('No title found for this page', 'It may need a sign-in, or block lookups')
+  }
+  const showAddress = (el: HTMLElement) => {
+    const span = hoveredSpan(el)
+    setHoverLink(null)
+    if (!span || !editor) return
+    const node = editor.state.doc.nodeAt(span.from)
+    // (marked as the link titles' own change, so the address isn't titled again straight away)
+    editor.view.dispatch(editor.state.tr.replaceWith(span.from, span.to, editor.schema.text(span.href, node?.marks ?? [])).setMeta(linkTitlesKey, { done: [] }))
+  }
+  const editLink = (el: HTMLElement) => {
+    const span = hoveredSpan(el)
+    setHoverLink(null)
+    if (!span || !editor) return
+    editor.chain().focus().setTextSelection({ from: span.from, to: span.to }).run()
+    openLinkField.current()
   }
   const removeLink = () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkMode(false) }
   const cancelLink = () => { setLinkMode(false); editor?.commands.focus() }
@@ -730,6 +776,9 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               <button className={active?.strike ? 'on' : ''} title="Strikethrough (⌘⇧S)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
               <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
+              {active?.hasLinks && (
+                <button title="Fix link titles — clear leftovers like <!----> and put each link’s page title in (no AI)" onMouseDown={keep} onClick={fixTitles}><TextCursorInput size={15} /></button>
+              )}
               {aiAllowed && aiOn && <>
                 <span className="bubble-sep" />
                 <button className={'ai-btn' + (wordsToGo ? ' locked' : '')} onMouseDown={keep}
@@ -811,7 +860,15 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
         document.body,
       )}
       {toolEditor && <AiToolEditor sample={toolEditor.sample} onClose={() => setToolEditor(null)} />}
-      {hoverLink && editor && (
+      {hoverLink?.web && editor && (
+        <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
+          <button title="Look up this page’s title again and put it in" onMouseDown={e => e.preventDefault()} onClick={() => refreshTitle(hoverLink.el)}><RefreshCw size={12} /><span>Refresh title</span></button>
+          <button title="Show the web address instead" onMouseDown={e => e.preventDefault()} onClick={() => showAddress(hoverLink.el)}><Globe size={12} /><span>Show address</span></button>
+          <button title="Change the address (the words can be typed over like any text)" onMouseDown={e => e.preventDefault()} onClick={() => editLink(hoverLink.el)}><Pencil size={12} /><span>Edit</span></button>
+          <button onMouseDown={e => e.preventDefault()} onClick={() => { const sp = hoveredSpan(hoverLink.el); setHoverLink(null); if (sp) editor.chain().focus().setTextSelection({ from: sp.from, to: sp.to }).unsetLink().setTextSelection(sp.to).run() }}><Unlink size={12} /><span>Unlink</span></button>
+        </div>
+      )}
+      {hoverLink && !hoverLink.web && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
           <button title="Open this note on the side" onMouseDown={e => e.preventDefault()}
             onClick={() => { open.current(hoverLink.el.getAttribute('data-title') ?? hoverLink.el.textContent ?? ''); setHoverLink(null) }}>

@@ -4,7 +4,7 @@ import { useStore } from './lib/store'
 import { supabase } from './lib/supabase'
 import { todayTitle } from './lib/links'
 import { startActiveTime } from './lib/activeTime'
-import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiToolsFirst, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
+import { LINK_TITLE_STYLES, linkTitleStyle, setLinkTitleStyle, WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiToolsFirst, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
 import { SwitchRow } from './components/Switch'
 import { AiToolsDialog } from './components/AiToolEditor'
 import { Notices } from './components/Notices'
@@ -134,6 +134,7 @@ function Workspace({ email }: { email: string }) {
   const [sideW, setSideW] = useState(() => { const v = Number(localStorage.getItem('side-w')); return v >= SIDE_MIN && v <= SIDE_MAX ? v : SIDE_W })
   const [resizing, setResizing] = useState(false)
   const [backupOpen, setBackupOpen] = useState(false)
+  const [linkStyle, setLinkStyle] = useState(linkTitleStyle)
   const backup = useBackupStatus()
   // a tool to review, when My AI tools is opened from a notice
   const [reviewId, setReviewId] = useState<string | undefined>()
@@ -272,6 +273,9 @@ function Workspace({ email }: { email: string }) {
             </div>
             <button className="menu-row" onClick={cycleTheme} title="System, dark or light"><span>Theme</span><span className="menu-value">{theme[0].toUpperCase() + theme.slice(1)}</span></button>
             <SwitchRow label="Animations" on={anim} onChange={setAnim} />
+            <button className="menu-row" title="What a pasted web link turns into: its page's title, author, time and date (looked up from the page, no AI). Click to change."
+              onClick={() => { const i = LINK_TITLE_STYLES.findIndex(x => x.id === linkStyle); const next = LINK_TITLE_STYLES[(i + 1) % LINK_TITLE_STYLES.length].id; setLinkTitleStyle(next); setLinkStyle(next) }}>
+              <span>Link titles</span><span className="menu-value">{LINK_TITLE_STYLES.find(x => x.id === linkStyle)!.label}</span></button>
             <div className="menu-sep" />
             <SwitchRow label="AI features" on={aiOn} onChange={on => { setAiFeaturesOn(on); setAiOn(on) }}
               hint="The ✨ writing tools and the AI score's meaning check, using Gemini. Off: no AI, and no text is sent to Gemini." />

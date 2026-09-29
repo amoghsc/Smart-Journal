@@ -65,4 +65,21 @@ export interface AiTool {
   /** One result even when two versions to compare is on. */
   single: boolean
   sort_order: number
+  /** Who made it (a tool shared with everyone belongs to its maker). */
+  owner?: string
+  /** private: only its maker has it · submitted: waiting for the admin to approve · published: everyone has it */
+  status?: 'private' | 'submitted' | 'published'
+  /** The maker's name, once they've asked to share it. */
+  author_name?: string | null
+}
+
+/** Something the app tells one person (a tool to review, a tool approved). */
+export interface AppNotice {
+  id: string
+  kind: 'tool-submitted' | 'tool-published' | string
+  title: string
+  body: string | null
+  tool_id: string | null
+  created_at: string
+  read_at: string | null
 }

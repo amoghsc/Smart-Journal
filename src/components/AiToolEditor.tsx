@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDown, ArrowUp, Pencil, Plus, Trash2, WandSparkles, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Clock, Globe, Pencil, Plus, Send, Trash2, WandSparkles, X } from 'lucide-react'
+import { toast } from '../lib/toast'
 import { useStore } from '../lib/store'
 import { detectLanguage, parseChoices, runAi, toolDef, toolTokens } from '../lib/ai'
 import { aiTwoVersions } from '../lib/settings'
 import type { AiTool } from '../lib/types'
 
-type Draft = Omit<AiTool, 'id' | 'sort_order'> & { id?: string }
+type Draft = Omit<AiTool, 'id' | 'sort_order' | 'owner' | 'status' | 'author_name'> & { id?: string }
 
 const SCOPES: { id: AiTool['scope']; label: string; hint: string }[] = [
   { id: 'word', label: 'A word', hint: 'Offered when one word is selected' },
@@ -42,13 +43,19 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
   )
 }
 
-/** Make or change one AI tool, and try it on some text before saving. */
-export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sample?: string; onClose: () => void }) {
-  const { saveAiTool, deleteAiTool } = useStore()
-  const [d, setD] = useState<Draft>(tool ? { ...tool } : blank)
+const fields = (t: AiTool): Draft => ({ id: t.id, name: t.name, scope: t.scope, output: t.output, prompt: t.prompt, creativity: t.creativity, single: t.single })
+const sameAs = (d: Draft, t: AiTool) => JSON.stringify(fields(t)) === JSON.stringify({ ...d, id: t.id })
+
+/**
+ * Make or change one AI tool, and try it on some text before saving. Its maker can ask for it to be shared with
+ * everyone; `review` is the admin looking at one waiting for approval: nothing can be changed, only tried and published.
+ */
+export function AiToolEditor({ tool, sample = '', review = false, onClose }: { tool?: AiTool; sample?: string; review?: boolean; onClose: () => void }) {
+  const { saveAiTool, deleteAiTool, submitAiTool, publishAiTool } = useStore()
+  const [d, setD] = useState<Draft>(tool ? fields(tool) : blank)
   const [text, setText] = useState(sample)
   const [result, setResult] = useState<string | string[] | null>(null)
-  const [busy, setBusy] = useState<'try' | 'save' | null>(null)
+  const [busy, setBusy] = useState<'try' | 'save' | 'share' | 'publish' | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => { setD(x => ({ ...x, [k]: v })); setResult(null) }
   const ready = d.name.trim() && d.prompt.trim()
@@ -67,6 +74,29 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
     setBusy('save'); setErr(null)
     try { await saveAiTool(d); onClose() } catch (e) { setErr((e as Error).message); setBusy(null) }
   }
+  /** Ask the admin to publish it for everyone (saving any changes first). */
+  const share = async () => {
+    if (!ready || !tool) return
+    if (!confirm(`Share “${d.name.trim()}” with everyone?\n\nIt goes to the admin to try first. Once it’s approved, every Smart Journal user gets it in their ✨ menu, and you’ll get a notification.`)) return
+    setBusy('share'); setErr(null)
+    try {
+      if (!sameAs(d, tool)) await saveAiTool(d)
+      await submitAiTool(tool.id)
+      toast('Sent for approval', 'You’ll get a notification when it’s live for everyone')
+      onClose()
+    } catch (e) { setErr((e as Error).message); setBusy(null) }
+  }
+  /** (Admin) publish it: every user gets it, and its maker is told. */
+  const publish = async () => {
+    if (!tool) return
+    setBusy('publish'); setErr(null)
+    try {
+      await publishAiTool(tool.id)
+      toast(`“${tool.name}” is live for everyone`, tool.author_name ? `${tool.author_name} has been told — with congratulations` : undefined)
+      onClose()
+    } catch (e) { setErr((e as Error).message); setBusy(null) }
+  }
+  const status = tool?.status ?? 'private'
   const remove = async () => {
     if (!tool || !confirm(`Delete the AI tool “${tool.name}”?`)) return
     try { await deleteAiTool(tool.id); onClose() } catch (e) { setErr((e as Error).message) }
@@ -76,10 +106,17 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
     <div className="modal-bg" onMouseDown={() => { if (!busy) onClose() }}>
       <div className="modal tool-editor" role="dialog" aria-label={tool ? `Edit ${tool.name}` : 'New AI tool'} onMouseDown={e => e.stopPropagation()}>
         <div className="modal-head">
-          <h2><WandSparkles size={16} /> {tool ? 'Edit AI tool' : 'New AI tool'}</h2>
+          <h2><WandSparkles size={16} /> {review ? 'Review AI tool' : tool ? 'Edit AI tool' : 'New AI tool'}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
         <div className="tool-body">
+          {review && (
+            <p className="tool-review-note">
+              <strong>{tool?.author_name ?? 'Someone'}</strong> wants to share this tool with everyone. Try it below; nothing here can be changed.
+              Publishing puts it in every user’s ✨ menu.
+            </p>
+          )}
+          <fieldset className="tool-fields" disabled={review}>
           {!tool && (
             <div className="tool-examples">
               <span className="muted small">Start from</span>
@@ -101,9 +138,16 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
             <textarea rows={4} maxLength={2000} value={d.prompt} placeholder="e.g. Pick out the words that carry emotion." onChange={e => set('prompt', e.target.value)} />
           </label>
           <div className="tool-field"><span>Style</span><Seg value={d.creativity} options={STYLES} onChange={v => set('creativity', v)} /></div>
+          </fieldset>
           <p className="tool-cost muted small" title="An estimate: instructions and house rules, a typical selection and a typical answer. Marathi and Hindi use about 2–3× as many tokens.">
             ≈ {toolTokens(d, aiTwoVersions()).toLocaleString()} Gemini tokens each time you use it
             {d.scope === 'any' ? ' (on a ~120-word paragraph)' : d.scope === 'sentence' ? ' (on a sentence)' : ' (on a word)'}</p>
+          {tool && !review && status !== 'private' && (
+            <p className={'tool-status ' + status}>
+              {status === 'published' ? <><Globe size={13} /> Shared with everyone.</> : <><Clock size={13} /> Waiting for the admin’s approval.</>}
+              {' '}Saving changes sends it back for approval{status === 'published' ? ', and others won’t have it until then' : ''}.
+            </p>
+          )}
 
           <div className="tool-try">
             <label className="tool-field"><span>Try it on</span>
@@ -121,10 +165,16 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
           {err && <div className="err">{err}</div>}
         </div>
         <div className="tool-actions">
-          {tool && <button className="btn danger small" onClick={remove} disabled={!!busy}><Trash2 size={14} /> Delete</button>}
+          {tool && !review && <button className="btn danger small" onClick={remove} disabled={!!busy}><Trash2 size={14} /> Delete</button>}
+          {tool && !review && status === 'private' && (
+            <button className="btn small" onClick={share} disabled={!ready || !!busy} title="Ask for it to be published to every Smart Journal user">
+              <Send size={13} /> {busy === 'share' ? 'Sending…' : 'Share with everyone'}</button>
+          )}
           <span className="spacer" />
           <button className="btn small" onClick={onClose} disabled={!!busy}>Cancel</button>
-          <button className="btn primary small" onClick={save} disabled={!ready || !!busy}>{busy === 'save' ? 'Saving…' : 'Save tool'}</button>
+          {review
+            ? <button className="btn primary small" onClick={publish} disabled={!!busy}><Globe size={14} /> {busy === 'publish' ? 'Publishing…' : 'Publish'}</button>
+            : <button className="btn primary small" onClick={save} disabled={!ready || !!busy}>{busy === 'save' ? 'Saving…' : 'Save tool'}</button>}
         </div>
       </div>
     </div>,
@@ -133,9 +183,12 @@ export function AiToolEditor({ tool, sample = '', onClose }: { tool?: AiTool; sa
 }
 
 /** Settings → My AI tools: the list, in menu order, to add, edit, reorder or delete. */
-export function AiToolsDialog({ onClose }: { onClose: () => void }) {
-  const { aiTools, moveAiTool, deleteAiTool } = useStore()
+export function AiToolsDialog({ onClose, reviewId }: { onClose: () => void; reviewId?: string }) {
+  const { aiTools, moveAiTool, deleteAiTool, pendingTools } = useStore()
   const [editing, setEditing] = useState<AiTool | 'new' | null>(null)
+  // opened from a notice: straight to that tool's review, if it's still waiting
+  const [reviewing, setReviewing] = useState<AiTool | null>(() => pendingTools.find(t => t.id === reviewId) ?? null)
+  if (reviewing) return <AiToolEditor tool={reviewing} review onClose={() => (reviewId ? onClose() : setReviewing(null))} />
   if (editing) return <AiToolEditor tool={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />
   const two = aiTwoVersions()
   return createPortal(
@@ -145,13 +198,31 @@ export function AiToolsDialog({ onClose }: { onClose: () => void }) {
           <h2><WandSparkles size={16} /> My AI tools</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
-        <p className="tool-intro">Your own tools, in the ✨ menu just for you. They’re listed here in menu order.</p>
+        {pendingTools.length > 0 && <>
+          <h3 className="tool-section">Waiting for your approval</h3>
+          <ul className="tool-rows pending">
+            {pendingTools.map(t => (
+              <li key={t.id} className="tool-row">
+                <button className="tool-row-main" onClick={() => setReviewing(t)} title="Review and publish">
+                  <span className="tool-row-name">{t.name} <span className="tool-badge draft">draft</span></span>
+                  <span className="tool-row-meta">by {t.author_name ?? 'someone'} · {SCOPES.find(x => x.id === t.scope)!.label} · {OUTPUTS.find(o => o.id === t.output)!.label} · ≈ {toolTokens(t, aiTwoVersions()).toLocaleString()} tokens</span>
+                  <span className="tool-row-prompt">{t.prompt}</span>
+                </button>
+                <span className="tool-row-actions"><button className="btn small" onClick={() => setReviewing(t)}>Review</button></span>
+              </li>
+            ))}
+          </ul>
+          <h3 className="tool-section">My AI tools</h3>
+        </>}
+        <p className="tool-intro">Your own tools, in the ✨ menu just for you — unless you share one with everyone. They’re listed here in menu order.</p>
         {aiTools.length ? (
           <ul className="tool-rows">
             {aiTools.map((t, i) => (
               <li key={t.id} className="tool-row">
                 <button className="tool-row-main" onClick={() => setEditing(t)} title="Edit">
-                  <span className="tool-row-name">{t.name}</span>
+                  <span className="tool-row-name">{t.name}
+                    {t.status === 'submitted' && <span className="tool-badge draft" title="Waiting for the admin’s approval">waiting</span>}
+                    {t.status === 'published' && <span className="tool-badge shared" title="Shared with everyone"><Globe size={10} /> shared</span>}</span>
                   <span className="tool-row-meta">
                     {SCOPES.find(x => x.id === t.scope)!.label} · {OUTPUTS.find(o => o.id === t.output)!.label} · {STYLES.find(x => x.id === t.creativity)!.label} · ≈ {toolTokens(t, two).toLocaleString()} tokens
                   </span>

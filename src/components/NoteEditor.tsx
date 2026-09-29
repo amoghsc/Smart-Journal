@@ -5,7 +5,7 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import type { EditorView } from '@tiptap/pm/view'
 import { PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import type { Fragment, Slice } from '@tiptap/pm/model'
-import { Bold, Check, ChevronRight, SquareSplitHorizontal, WandSparkles, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
+import { Bold, Check, ChevronRight, Globe, SquareSplitHorizontal, WandSparkles, Highlighter, Italic, Link2, Link2Off, Loader2, MessageSquarePlus, Plus, Sparkles, Strikethrough, Unlink, X } from 'lucide-react'
 import { AI_TASKS, LANGS, aiStatus, toolDef, toolTask, detectLanguage, parseChoices, runAi, runAiOptions, selectionToText, singleWord, translateTargets, wordInContext, type AiTask, type Lang } from '../lib/ai'
 import { planAi, previewHtml, resultContent } from '../lib/aiPlace'
 import { AiText, setAiScores } from '../lib/aiText'
@@ -629,17 +629,22 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     return acc
   }, [])
   // tools this person made, offered when the selection suits them (a word, one line, or anything)
-  const { aiTools } = useStore()
+  // (plus tools others shared with everyone, and — for the admin — tools waiting for approval, to try out)
+  const { aiTools, sharedTools, pendingTools } = useStore()
   const sel = editor?.state.selection
   const oneLine = !!sel && !sel.empty && sel.$from.sameParent(sel.$to) && sel.$from.parent.isTextblock
-  const myTools = aiTools.filter(t => (t.scope === 'word' ? !!active?.word : t.scope === 'sentence' ? oneLine : true))
+  const allTools = [...aiTools, ...sharedTools, ...pendingTools.filter(t => !aiTools.some(m => m.id === t.id))]
+  const myTools = allTools.filter(t => (t.scope === 'word' ? !!active?.word : t.scope === 'sentence' ? oneLine : true))
+  const ownIds = new Set(aiTools.map(t => t.id))
   const [toolEditor, setToolEditor] = useState<{ sample: string } | null>(null)
   // your tools' section of the menu: at the bottom, or at the top (a setting)
   const mine = myTools.length > 0 && (
     <div className="ai-group ai-mine">
       {myTools.map(t => (
-        <button key={t.id} role="menuitem" className="ai-item custom" onMouseDown={e => e.preventDefault()} onClick={() => runTask(toolTask(t))} title={t.prompt}>
-          <span className="ai-custom-name"><WandSparkles size={12} /> {t.name}</span>
+        <button key={t.id} role="menuitem" className="ai-item custom" onMouseDown={e => e.preventDefault()} onClick={() => runTask(toolTask(t))}
+          title={(t.status === 'submitted' ? 'Draft, waiting for approval — ' : !ownIds.has(t.id) ? `Shared by ${t.author_name ?? 'another user'} — ` : '') + t.prompt}>
+          <span className="ai-custom-name">{ownIds.has(t.id) ? <WandSparkles size={12} /> : <Globe size={12} />} {t.name}
+            {t.status === 'submitted' && <span className="tool-badge draft">draft</span>}</span>
           {t.output === 'after' && <span className="ai-note">adds below</span>}
           {t.output === 'comment' && <span className="ai-note">comment</span>}
         </button>

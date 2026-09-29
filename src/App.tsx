@@ -7,6 +7,7 @@ import { startActiveTime } from './lib/activeTime'
 import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions, aiWriteFirst, setAiFeaturesOn, setAiScoreOn, setAiToolsFirst, setAiTwoVersions, setAiWriteFirst } from './lib/settings'
 import { SwitchRow } from './components/Switch'
 import { AiToolsDialog } from './components/AiToolEditor'
+import { Notices } from './components/Notices'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
@@ -28,6 +29,8 @@ const TEXT_SIZES = [{ id: 's', px: 15, label: 'Small' }, { id: 'm', px: 17, labe
 type TextSize = typeof TEXT_SIZES[number]['id']
 const applyTextSize = (id: TextSize) => document.documentElement.style.setProperty('--note-size', `${TEXT_SIZES.find(t => t.id === id)!.px}px`)
 
+/** The sidebar's width: default, and how far it can be dragged. */
+const SIDE_W = 240, SIDE_MIN = 180, SIDE_MAX = 520
 const MAX_PANES = 3
 
 /** Panes after duplicating pane `i` as `title` (see openDuplicate). */
@@ -125,6 +128,26 @@ function Workspace({ email }: { email: string }) {
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
   }, [])
+
+  // the sidebar's width: drag its edge (long note names), remembered on this device
+  const [sideW, setSideW] = useState(() => { const v = Number(localStorage.getItem('side-w')); return v >= SIDE_MIN && v <= SIDE_MAX ? v : SIDE_W })
+  const [resizing, setResizing] = useState(false)
+  // a tool to review, when My AI tools is opened from a notice
+  const [reviewId, setReviewId] = useState<string | undefined>()
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const el = e.currentTarget, x0 = e.clientX, w0 = sideW
+    el.setPointerCapture(e.pointerId)
+    setResizing(true)
+    let w = w0
+    const move = (ev: PointerEvent) => { w = Math.round(Math.min(SIDE_MAX, Math.max(SIDE_MIN, w0 + ev.clientX - x0))); setSideW(w) }
+    const up = () => {
+      el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up)
+      setResizing(false)
+      localStorage.setItem('side-w', String(w))
+    }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+  }
 
   const openMain = useCallback((title: string) => {
     // a day opens in the journal, scrolled to it
@@ -228,6 +251,7 @@ function Workspace({ email }: { email: string }) {
         <div className="top-actions">
           {canPublish && vault?.kind === 'public' && <button className="icon-btn" title="Publish this vault" onClick={() => setPublishing(true)}><Globe size={18} /></button>}
           {!narrow && <button className={'icon-btn' + (canvasOpen ? ' on' : '')} title="Toggle canvas" onClick={() => setCanvasOpen(o => !o)}><LayoutGrid size={18} /></button>}
+          <Notices onReview={id => { setReviewId(id); setToolsOpen(true) }} />
           <button className="icon-btn" onClick={() => setMenu(m => !m)} aria-label="Settings"><Settings size={18} /></button>
         </div>
         {menu && (
@@ -264,12 +288,14 @@ function Workspace({ email }: { email: string }) {
         )}
       </header>
 
-      <div className={'work' + (narrow ? ' narrow' : '')}>
+      <div className={'work' + (narrow ? ' narrow' : '') + (resizing ? ' resizing' : '')} style={{ '--side-w': `${sideW}px` } as React.CSSProperties}>
         <div className={'side-col' + (sidebar ? '' : ' closed')}>
           <Sidebar current={main} open={panes} searchOpen={searchOpen} onSearchOpen={setSearchOpen} onOpen={openMain}
             onOpenBeside={t => openBeside(panes.length - 1, t)} onNew={newNote} />
         </div>
         {narrow && sidebar && <div className="scrim" onClick={() => setSidebar(false)} />}
+        {!narrow && sidebar && <div className="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the sidebar" title="Drag to resize · double-click to reset"
+          onPointerDown={startResize} onDoubleClick={() => { setSideW(SIDE_W); localStorage.removeItem('side-w') }} />}
         <SplitPane storageKey="canvas-split" collapsed={!showCanvas}
           left={canvasMounted && !narrow ? <CanvasPane canvasId={canvasId} onSelectCanvas={setCanvasId} onOpenPage={openMain} /> : null}
           right={
@@ -279,7 +305,8 @@ function Workspace({ email }: { email: string }) {
                 if (title === JOURNAL) return (
                   <JournalPane key={JOURNAL} focus={journalFocus} comments={!narrow && visible.length === 1 && !showCanvas}
                     onOpenLink={t => openBeside(i, t, false)} onOpenInVault={openInVault} onDuplicate={t => openDuplicate(i, t)}
-                    onVisible={d => { journalDays.current = d }} />
+                    onVisible={d => { journalDays.current = d }}
+                    onClose={i > 0 ? () => closePane(JOURNAL) : undefined} closing={closing.includes(JOURNAL)} />
                 )
                 return (
                   <PagePane
@@ -303,7 +330,7 @@ function Workspace({ email }: { email: string }) {
       </div>
       {publishing && vault && <PublishDialog vault={vault} onClose={() => setPublishing(false)} />}
       <DatePickerHost />
-      {toolsOpen && <AiToolsDialog onClose={() => setToolsOpen(false)} />}
+      {toolsOpen && <AiToolsDialog reviewId={reviewId} onClose={() => { setToolsOpen(false); setReviewId(undefined) }} />}
     </div>
   )
 }

@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { openedFromReset, supabase } from './supabase'
-import type { AiTool, CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
+import type { AiTool, AppNotice, CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
 
+const TOOL_COLS = 'id,name,scope,output,prompt,creativity,single,sort_order,owner,status,author_name'
 const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,typed_words,created_at,updated_at'
 
 interface Store {
@@ -17,6 +18,19 @@ interface Store {
   canPublish: boolean
   /** AI tools this person made, in menu order. */
   aiTools: AiTool[]
+  /** Tools other people made and the admin published: everyone has them. */
+  sharedTools: AiTool[]
+  /** The super admin: approves tools people want to share. */
+  isAdmin: boolean
+  /** Tools waiting for the admin's approval (only the admin sees these). */
+  pendingTools: AiTool[]
+  /** Ask the admin to publish one of your tools to everyone. */
+  submitAiTool: (id: string) => Promise<void>
+  /** (Admin) publish a tool that's waiting, to everyone. */
+  publishAiTool: (id: string) => Promise<void>
+  /** Notices for this person, newest first. */
+  notices: AppNotice[]
+  markNoticesRead: () => Promise<void>
   saveAiTool: (tool: Omit<AiTool, 'id' | 'sort_order'> & { id?: string }) => Promise<AiTool>
   deleteAiTool: (id: string) => Promise<void>
   moveAiTool: (id: string, by: -1 | 1) => Promise<void>
@@ -71,6 +85,8 @@ export const useStore = () => {
 }
 
 const SAVE_DELAY = 700
+/** Fired on window when a notice arrives (detail: the AppNotice). */
+export const NOTICE_EVENT = 'nt-notice'
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -78,7 +94,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [recovering, setRecovering] = useState(openedFromReset)
   const endRecovery = useCallback(() => setRecovering(false), [])
   const [canPublish, setCanPublish] = useState(false)
-  const [aiTools, setAiTools] = useState<AiTool[]>([])
+  // every tool this person can see: their own, everyone's published ones, and (the admin) the ones waiting
+  const [tools, setTools] = useState<AiTool[]>([])
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [notices, setNotices] = useState<AppNotice[]>([])
+  const uid = session?.user.id
+  const aiTools = useMemo(() => tools.filter(t => !t.owner || t.owner === uid), [tools, uid])
+  const sharedTools = useMemo(() => tools.filter(t => t.owner && t.owner !== uid && t.status === 'published'), [tools, uid])
+  const pendingTools = useMemo(() => (isAdmin ? tools.filter(t => t.status === 'submitted') : []), [tools, isAdmin])
+  const setAiTools = setTools
   const seeding = useRef(false)
   const [allPages, setAllPages] = useState<Page[]>([])
   const [vaults, setVaults] = useState<Vault[]>([])
@@ -125,12 +149,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); setAiTools([]); return }
+    if (!session) { setAllPages([]); setVaults([]); setCanPublish(false); setAiTools([]); setIsAdmin(false); setNotices([]); return }
     reload()
-    supabase.from('nt_members').select('can_publish').maybeSingle().then(({ data }) => setCanPublish(!!data?.can_publish))
-    supabase.from('nt_ai_tools').select('id,name,scope,output,prompt,creativity,single,sort_order').order('sort_order').order('created_at')
-      .then(({ data, error }) => { if (error) console.warn('AI tools not loaded', error.message); else setAiTools((data ?? []) as AiTool[]) })
-    const onVis = () => { if (document.visibilityState === 'visible') reload(); else flushAll() }
+    supabase.from('nt_members').select('can_publish,is_admin').maybeSingle().then(({ data }) => { setCanPublish(!!data?.can_publish); setIsAdmin(!!data?.is_admin) })
+    loadTools()
+    loadNotices()
+    const onVis = () => { if (document.visibilityState === 'visible') { reload(); loadTools(); loadNotices() } else flushAll() }
     document.addEventListener('visibilitychange', onVis)
     window.addEventListener('pagehide', flushAll)
     return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pagehide', flushAll) }
@@ -405,12 +429,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (p && typeof data === 'number') upsertLocal({ ...p, typed_words: data })
   }, [])
 
-  // ---- AI tools people make ----
+  // ---- AI tools people make, and share ----
+  const loadTools = useCallback(async () => {
+    const { data, error } = await supabase.from('nt_ai_tools').select(TOOL_COLS).order('sort_order').order('created_at')
+    if (error) console.warn('AI tools not loaded', error.message); else setTools((data ?? []) as AiTool[])
+  }, [])
+  const loadNotices = useCallback(async () => {
+    const { data, error } = await supabase.from('nt_notifications').select('id,kind,title,body,tool_id,created_at,read_at').order('created_at', { ascending: false }).limit(50)
+    if (error) console.warn('notices not loaded', error.message); else setNotices((data ?? []) as AppNotice[])
+  }, [])
+  // new notices arrive live (a tool to review, a tool approved); the tools they're about change with them
+  useEffect(() => {
+    if (!uid) return
+    const ch = supabase.channel('nt-notices')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'nt_notifications', filter: `owner=eq.${uid}` }, payload => {
+        const n = payload.new as AppNotice
+        setNotices(ns => (ns.some(x => x.id === n.id) ? ns : [n, ...ns]))
+        loadTools()
+        window.dispatchEvent(new CustomEvent(NOTICE_EVENT, { detail: n }))
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [uid, loadTools])
+  const markNoticesRead = useCallback(async () => {
+    const now = new Date().toISOString()
+    setNotices(ns => ns.map(n => (n.read_at ? n : { ...n, read_at: now })))
+    const { error } = await supabase.from('nt_notifications').update({ read_at: now }).is('read_at', null)
+    if (error) console.warn('notices not marked read', error.message)
+  }, [])
+  const submitAiTool = useCallback(async (id: string) => {
+    const { error } = await supabase.rpc('nt_submit_ai_tool', { tool: id })
+    if (error) throw error
+    await loadTools()
+  }, [loadTools])
+  const publishAiTool = useCallback(async (id: string) => {
+    const { error } = await supabase.rpc('nt_publish_ai_tool', { tool: id })
+    if (error) throw error
+    await loadTools()
+  }, [loadTools])
+
   const saveAiTool = useCallback(async (tool: Omit<AiTool, 'id' | 'sort_order'> & { id?: string }) => {
     const fields = { name: tool.name.trim(), scope: tool.scope, output: tool.output, prompt: tool.prompt.trim(), creativity: tool.creativity, single: tool.single, updated_at: new Date().toISOString() }
     const { data, error } = tool.id
-      ? await supabase.from('nt_ai_tools').update(fields).eq('id', tool.id).select('id,name,scope,output,prompt,creativity,single,sort_order').single()
-      : await supabase.from('nt_ai_tools').insert({ ...fields, sort_order: aiTools.length }).select('id,name,scope,output,prompt,creativity,single,sort_order').single()
+      ? await supabase.from('nt_ai_tools').update(fields).eq('id', tool.id).select(TOOL_COLS).single()
+      : await supabase.from('nt_ai_tools').insert({ ...fields, sort_order: aiTools.length }).select(TOOL_COLS).single()
     if (error) throw error
     const saved = data as AiTool
     setAiTools(ts => (tool.id ? ts.map(t => (t.id === saved.id ? saved : t)) : [...ts, saved]))
@@ -426,7 +488,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (i < 0 || j < 0 || j >= list.length) return
     ;[list[i], list[j]] = [list[j], list[i]]
     const ordered = list.map((t, k) => ({ ...t, sort_order: k }))
-    setAiTools(ordered)
+    setAiTools(ts => [...ordered, ...ts.filter(t => !ordered.some(o => o.id === t.id))])
     await Promise.all([ordered[i], ordered[j]].map(t => supabase.from('nt_ai_tools').update({ sort_order: t.sort_order }).eq('id', t.id)))
   }, [aiTools])
 
@@ -492,7 +554,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value: Store = {
-    session, ready, recovering, endRecovery, canPublish, aiTools, saveAiTool, deleteAiTool, moveAiTool, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
+    session, ready, recovering, endRecovery, canPublish, aiTools, sharedTools, isAdmin, pendingTools, submitAiTool, publishAiTool, notices, markNoticesRead, saveAiTool, deleteAiTool, moveAiTool, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, duplicatePage, addTime, addWords,
     createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
   }

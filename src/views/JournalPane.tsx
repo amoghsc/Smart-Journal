@@ -21,6 +21,9 @@ interface Props {
   comments?: boolean
   /** Which days are on screen now (for time spent). */
   onVisible?: (days: string[]) => void
+  /** Opened beside another note: it can be closed. */
+  onClose?: () => void
+  closing?: boolean
 }
 
 /**
@@ -29,7 +32,7 @@ interface Props {
  * down; days near the screen are editable, the rest show their text until you reach them, so a long journal stays
  * light. Find searches every day, drawn or not, and marks each match beside the scrollbar.
  */
-export function JournalPane({ focus, onOpenLink, onOpenInVault, onDuplicate, comments, onVisible }: Props) {
+export function JournalPane({ focus, onOpenLink, onOpenInVault, onDuplicate, comments, onVisible, onClose, closing }: Props) {
   const { pages } = useStore()
   const scroller = useRef<HTMLDivElement>(null)
   // days asked for that have no note yet (picked on the calendar): shown, empty, until you write
@@ -234,7 +237,8 @@ export function JournalPane({ focus, onOpenLink, onOpenInVault, onDuplicate, com
   const marksRight = Math.max(box ? box.offsetWidth - box.clientWidth : 0, 10) + 12
 
   return (
-    <div className="pane journal">
+    <div className={'pane journal' + (closing ? ' closing' : '')}>
+      {onClose && <button className="icon-btn journal-close" title="Close the journal" onClick={onClose}><X size={18} /></button>}
       {find && (
         <div className="note-find" role="search">
           <Search size={14} className="note-find-icon" />

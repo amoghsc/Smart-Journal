@@ -54,19 +54,24 @@ export function Sidebar({ current, open, searchOpen, onSearchOpen, onOpen, onOpe
         {searchOpen ? (
           <input ref={input} value={q} placeholder="Search notes and days" onChange={e => setQ(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') onSearchOpen(false); if (e.key === 'Enter' && list[0]) onOpen(list[0].title) }} />
-        ) : <span className="side-title">Notes</span>}
+        ) : null}
         <span className="spacer" />
         <button className="icon-btn" title={searchOpen ? 'Close search' : 'Search'} onClick={() => onSearchOpen(!searchOpen)}>{searchOpen ? <X size={16} /> : <Search size={16} />}</button>
         <button className="icon-btn new-note" title="New note (Ctrl+N)" onClick={onNew}><Plus size={20} strokeWidth={2.5} /></button>
       </div>
-      <ul className="side-list">
-        {!q && (
+      {/* the journal stays put at the top while the notes scroll under it */}
+      {!q && (
+        <ul className="side-list side-pinned">
           <li key="journal" className={'journal-row' + (current === JOURNAL ? ' on' : '')} onClick={() => onOpen(JOURNAL)} title="All your days, newest first">
             <CalendarDays size={14} className="journal-icon" />
             <span className="row-label">Journal</span>
             <span className="journal-date">{prettyDate(today, true)}</span>
+            <button className="row-beside" title="Open to the right" disabled={open.includes(JOURNAL)}
+              onClick={e => { e.stopPropagation(); onOpenBeside(JOURNAL) }}><SquareSplitHorizontal size={14} /></button>
           </li>
-        )}
+        </ul>
+      )}
+      <ul className="side-list">
         {list.map(p => row(p.title, p.id))}
         {list.length === 0 && q && <li className="empty">No matches</li>}
       </ul>

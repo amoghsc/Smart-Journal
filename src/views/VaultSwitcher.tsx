@@ -51,6 +51,7 @@ export function VaultSwitcher() {
   return (
     <div className="vault" ref={box}>
       <button className="vault-btn" onClick={() => setOpen(o => !o)} title="Switch vault">
+        <span className="vault-label">Vault</span>
         {vault.kind === 'public' ? <Globe size={14} /> : <Lock size={14} />}
         <span className="vault-name">{vault.name}</span>
         <ChevronDown size={14} className="vault-caret" />

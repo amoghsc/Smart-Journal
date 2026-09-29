@@ -10,7 +10,7 @@ import { strFromU8, unzipSync } from 'fflate'
 export type Source = 'obsidian' | 'logseq' | 'roam'
 export const SOURCE_NAMES: Record<Source, string> = { obsidian: 'Obsidian', logseq: 'Logseq', roam: 'Roam' }
 
-export interface ImportedNote { title: string; body: string; created_at?: string; updated_at?: string }
+export interface ImportedNote { title: string; body: string; created_at?: string; updated_at?: string; /** nothing written in it */ empty?: boolean }
 export interface ImportPlan {
   source: Source
   notes: ImportedNote[]
@@ -21,6 +21,8 @@ export interface ImportPlan {
   images: number
   /** Files that couldn't be read. */
   skipped: string[]
+  /** Pages with nothing in them (Roam and Logseq make one for every [[link]] and #tag). */
+  empty: number
 }
 
 interface InFile { path: string; text: string; modified?: number }
@@ -94,11 +96,14 @@ interface Ctx {
   /** Roam block references: uid → the block's text. */
   blocks?: Map<string, string>
   stats: { links: number; images: number }
+  /** Inside a website link's text: note links and tags stay plain words (a link can't hold another). */
+  plain?: boolean
 }
 
 function wikilink(title: string, ctx: Ctx): string {
   const t = ctx.target(title)
   if (!t) return ''
+  if (ctx.plain) return esc(title.trim())
   ctx.stats.links++
   return `<a class="wikilink" data-title="${esc(t)}">${esc(t)}</a>`
 }
@@ -112,9 +117,17 @@ function image(alt: string, src: string, ctx: Ctx): string {
     : `<em>🖼 ${esc(name)}</em>`
 }
 
-export function inline(src: string, ctx: Ctx): string {
-  const keep: string[] = []
-  const hold = (html: string) => `\u0000${keep.push(html) - 1}\u0000`
+// Pieces already turned into HTML are parked behind markers while the rest is worked on. The markers use Unicode's
+// private-use area, never a control character: the database refuses those if one ever slipped through.
+const OPEN = '\uE000', CLOSE = '\uE001'
+const MARKER = /\uE000(\d+)\uE001/g
+/** A web address as Roam writes it: words inside can be [[linked]]; the address itself has no brackets. */
+const cleanUrl = (u: string) => u.replace(/\[\[|\]\]/g, '')
+
+/** `shared`: the outer call's parked pieces (a link's text is worked on inside the line it's in). */
+export function inline(src: string, ctx: Ctx, shared?: string[]): string {
+  const outer = !shared, keep = shared ?? []
+  const hold = (html: string) => `${OPEN}${keep.push(html) - 1}${CLOSE}`
   let s = src
   // code first: nothing inside it is formatting
   s = s.replace(/`([^`\n]+)`/g, (_, c: string) => hold(`<code>${esc(c)}</code>`))
@@ -123,7 +136,7 @@ export function inline(src: string, ctx: Ctx): string {
     s = s.replace(/\{\{\[\[TODO\]\]\}\}\s*|^(TODO|LATER|NOW|DOING)\s+/g, () => '☐ ')
     s = s.replace(/\{\{\[\[DONE\]\]\}\}\s*|^(DONE)\s+/g, () => '☑ ')
     // a block reference shows the block it points to (one level deep)
-    s = s.replace(/\(\(([\w-]{6,})\)\)/g, (_, uid: string) => { const t = ctx.blocks?.get(uid); return t ? hold(`<em>${inline(t, { ...ctx, blocks: undefined })}</em>`) : '' })
+    s = s.replace(/\(\(([\w-]{6,})\)\)/g, (_, uid: string) => { const t = ctx.blocks?.get(uid); return t ? hold(`<em>${inline(t, { ...ctx, blocks: undefined }, keep)}</em>`) : '' })
     // tags are links in Logseq and Roam
     s = s.replace(/(^|\s)#\[\[([^\]]+)\]\]/g, (_, pre: string, t: string) => pre + hold(wikilink(t, ctx)))
     s = s.replace(/\[([^\]]+)\]\(\[\[([^\]]+)\]\]\)/g, (_, _alias: string, t: string) => hold(wikilink(t, ctx)))
@@ -131,16 +144,18 @@ export function inline(src: string, ctx: Ctx): string {
   } else {
     s = s.replace(/%%[\s\S]*?%%/g, '')
   }
-  // images, then embeds and links
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, alt: string, url: string) => hold(image(alt, url, ctx)))
+  // images, then links to websites (before note links: an address may have [[words]] in it), embeds and note links
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, alt: string, url: string) => hold(image(alt, cleanUrl(url), ctx)))
+  s = s.replace(/\[((?:\[\[[^\]]*\]\]|[^\]])+)\]\(((?:https?:|mailto:)[^)\s]+)\)/g, (_, text: string, url: string) =>
+    // (a note link can't sit inside a website link: its words stay plain there)
+    hold(`<a href="${esc(cleanUrl(url))}" target="_blank" rel="noopener">${inline(text, { ...ctx, plain: true }, keep)}</a>`))
   s = s.replace(/!\[\[([^\]]+)\]\]/g, (_, t: string) => {
     const name = t.split('|')[0]
     return hold(IMAGE.test(name) ? image('', name, ctx) : wikilink(name.split('#')[0], ctx))
   })
   s = s.replace(/\[\[([^\]]+)\]\]/g, (_, t: string) => hold(wikilink(t.split('|')[0].split('#')[0], ctx)))
-  s = s.replace(/\[([^\]]+)\]\(((?:https?:|mailto:)[^)\s]+)\)/g, (_, text: string, url: string) => hold(`<a href="${esc(url)}" target="_blank" rel="noopener">${inline(text, { ...ctx })}</a>`))
-  s = s.replace(/<((?:https?:)[^>\s]+)>/g, (_, url: string) => hold(`<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>`))
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g, (_, pre: string, url: string) => pre + hold(`<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>`))
+  s = s.replace(/<((?:https?:)[^>\s\uE000\uE001]+)>/g, (_, url: string) => hold(`<a href="${esc(cleanUrl(url))}" target="_blank" rel="noopener">${esc(cleanUrl(url))}</a>`))
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>()\uE000\uE001]+[^\s<>().,;:!?'"\uE000\uE001])/g, (_, pre: string, url: string) => pre + hold(`<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>`))
   if (ctx.flavor !== 'obsidian') {
     s = s.replace(/(^|\s)#([\p{L}\p{N}_/-]+)/gu, (_, pre: string, t: string) => pre + hold(wikilink(t, ctx)))
   }
@@ -153,7 +168,10 @@ export function inline(src: string, ctx: Ctx): string {
   s = s.replace(/\^\^(?=\S)([\s\S]*?\S)\^\^/g, '<mark>$1</mark>')
   s = s.replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?!\w)/g, '$1<em>$2</em>')
   s = s.replace(/(^|[^\w])_(?=\S)([^_\n]*?\S)_(?!\w)/g, '$1<em>$2</em>')
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => keep[+i])
+  if (!outer) return s
+  // parked pieces may hold others: put them back until none are left
+  for (let n = 0; n < 10 && /\uE000\d+\uE001/.test(s); n++) s = s.replace(MARKER, (_, i: string) => keep[+i] ?? '')
+  return s.replace(/[\uE000\uE001]/g, '')
 }
 
 // ---- blocks: headings, lists (the whole page, in Logseq and Roam), quotes, code, paragraphs ----
@@ -338,13 +356,15 @@ export function planImport(files: InFile[], source: Source, imageFiles: number):
     },
   }
   const iso = (t?: number) => (t && t > 0 ? new Date(t).toISOString() : undefined)
+  // (control characters can't be stored: none should be left, but never send one)
+  const clean = (s: string) => s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\uE000\uE001]/g, '')
   const notes = named.map(({ raw, title }) => ({
-    title,
-    body: raw.roam ? (roamHtml(raw.roam, ctx) || '<p></p>') : markdownToHtml(raw.text ?? '', ctx),
+    title: clean(title),
+    body: clean(raw.roam ? (roamHtml(raw.roam, ctx) || '<p></p>') : markdownToHtml(raw.text ?? '', ctx)),
     created_at: iso(raw.created), updated_at: iso(raw.updated),
-  }))
+  })).map(n => ({ ...n, empty: !/[\p{L}\p{N}]/u.test(n.body.replace(/<[^>]*>/g, '')) }))
   return {
-    source, notes, skipped,
+    source, notes, skipped, empty: notes.filter(n => n.empty).length,
     days: named.filter(n => n.day).length, pages: named.filter(n => !n.day).length,
     links: stats.links, images: stats.images + imageFiles,
   }

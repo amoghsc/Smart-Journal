@@ -64,7 +64,7 @@ interface Store {
   /** Copy a note within its vault as "<title> (copy)"; returns the copy. */
   duplicatePage: (id: string) => Promise<Page>
   /** Put imported notes into a vault (with their links, for backlinks); `onProgress` gets how many are saved. */
-  importPages: (vaultId: string, notes: { title: string; body: string; created_at?: string; updated_at?: string }[], onProgress?: (saved: number) => void) => Promise<number>
+  importPages: (vaultId: string, notes: { title: string; body: string; created_at?: string; updated_at?: string }[], onProgress?: (saved: number) => void) => Promise<{ saved: number; failed: string[] }>
   /** Count words typed by hand in a note. */
   addWords: (id: string, words: number) => Promise<void>
   createVault: (name: string, kind: VaultKind) => Promise<Vault>
@@ -513,20 +513,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(), vault_id: vaultId, title: n.title, kind: isDailyTitle(n.title) ? 'daily' : 'note', body: n.body, draft: false,
       created_at: n.created_at ?? now, updated_at: n.updated_at ?? n.created_at ?? now,
     }))
-    // in batches, so a big graph doesn't make one huge request
+    // in batches, so a big graph doesn't make one huge request; a batch that fails is tried a note at a time, so
+    // one note the database won't take doesn't stop the rest
+    const saved: Page[] = [], failed: string[] = []
+    const put = (batch: Page[]) => supabase.from('nt_pages').insert(batch.map(p => ({ ...row(p), created_at: p.created_at })))
     for (let i = 0; i < ps.length; i += 100) {
       const batch = ps.slice(i, i + 100)
-      const { error } = await supabase.from('nt_pages').insert(batch.map(p => ({ ...row(p), created_at: p.created_at })))
-      if (error) throw error
+      const { error } = await put(batch)
+      if (!error) saved.push(...batch)
+      else {
+        console.warn('import: a batch failed, trying its notes one by one', error.message)
+        for (const p of batch) { const { error: e } = await put([p]); if (e) failed.push(p.title); else saved.push(p) }
+      }
       onProgress?.(i + batch.length)
     }
-    const links = ps.flatMap(p => extractLinks(p.body).map(t => ({ from_page: p.id, to_title: t })))
+    if (!saved.length) throw new Error(`None of the notes could be saved${failed.length ? ` (e.g. “${failed[0]}”)` : ''}`)
+    const links = saved.flatMap(p => extractLinks(p.body).map(t => ({ from_page: p.id, to_title: t })))
     for (let i = 0; i < links.length; i += 500) {
       const { error } = await supabase.from('nt_links').insert(links.slice(i, i + 500))
       if (error) console.warn('import: some links not saved', error.message)
     }
     await reload()
-    return ps.length
+    return { saved: saved.length, failed }
   }, [reload])
 
   const updateVault = useCallback(async (id: string, patch: Partial<Vault>) => {

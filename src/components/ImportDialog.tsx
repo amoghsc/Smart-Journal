@@ -13,7 +13,7 @@ const HOW: Record<Source, string> = {
 
 /** Import an Obsidian vault, a Logseq graph or a Roam export into a new vault of its own. */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
-  const { vaults, createVault, importPages, setVault } = useStore()
+  const { vaults, createVault, deleteVault, importPages, setVault } = useStore()
   const folder = useRef<HTMLInputElement>(null)
   const file = useRef<HTMLInputElement>(null)
   const [plan, setPlan] = useState<ImportPlan | null>(null)
@@ -21,6 +21,8 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState<VaultKind>('private')
   const [stage, setStage] = useState<'pick' | 'reading' | 'ready' | 'saving' | 'done'>('pick')
   const [saved, setSaved] = useState(0)
+  const [withEmpty, setWithEmpty] = useState(false)
+  const [failed, setFailed] = useState<string[]>([])
   const [err, setErr] = useState<string | null>(null)
 
   const picked = async (list: FileList | null) => {
@@ -41,17 +43,27 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
     } catch (e) { setErr((e as Error).message); setStage('pick') }
   }
 
+  // empty pages (one per [[link]] in Roam and Logseq) are left out unless asked for: links to them work either way
+  const chosen = plan ? plan.notes.filter(n => withEmpty || !n.empty) : []
   const run = async () => {
     if (!plan || !name.trim()) return
     if (vaults.some(v => v.name.toLowerCase() === name.trim().toLowerCase())) { setErr('A vault has that name already — pick another, so the notes stay apart.'); return }
     setErr(null); setStage('saving'); setSaved(0)
+    let made: string | null = null
     try {
       const v = await createVault(name.trim(), kind)
-      await importPages(v.id, plan.notes, setSaved)
+      made = v.id
+      const r = await importPages(v.id, chosen, setSaved)
+      setFailed(r.failed)
       setVault(v.id)
       setStage('done')
-    } catch (e) { setErr((e as Error).message); setStage('ready') }
+    } catch (e) {
+      // nothing got in: don't leave an empty vault behind
+      if (made) await deleteVault(made).catch(() => {})
+      setErr((e as Error).message); setStage('ready')
+    }
   }
+
 
   const busy = stage === 'reading' || stage === 'saving'
   return createPortal(
@@ -87,6 +99,12 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
               <p className="muted small">Links between notes keep working, and so do backlinks. Daily notes join this vault’s journal. Links to websites stay links.
                 {plan.images > 0 && <> <b>{plan.images.toLocaleString()} images</b> aren’t copied yet: pictures on the web become links, pictures on your disk are marked 🖼 with their name.</>}
                 {plan.skipped.length > 0 && <> {plan.skipped.length} file(s) couldn’t be read.</>}</p>
+              {plan.empty > 0 && (
+                <label className="tool-check">
+                  <input type="checkbox" checked={withEmpty} onChange={e => setWithEmpty(e.target.checked)} disabled={stage === 'saving'} />
+                  <span>Also bring the {plan.empty.toLocaleString()} empty {plan.empty === 1 ? 'page' : 'pages'} <em className="muted">({SOURCE_NAMES[plan.source]} makes one for every [[link]] and #tag; links to them work either way, and each shows its backlinks when you open it)</em></span>
+                </label>
+              )}
             </div>
             <label className="import-field"><span>New vault’s name</span>
               <input value={name} maxLength={60} onChange={e => setName(e.target.value)} disabled={stage === 'saving'} autoFocus /></label>
@@ -95,14 +113,15 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
               <button className={kind === 'public' ? 'on' : ''} onClick={() => setKind('public')} disabled={stage === 'saving'}><Globe size={12} /> Public</button>
             </div>
             {stage === 'saving' && (
-              <div className="import-progress" role="progressbar" aria-valuemin={0} aria-valuemax={plan.notes.length} aria-valuenow={saved}>
-                <div style={{ width: `${Math.round((saved / plan.notes.length) * 100)}%` }} />
-                <span>{saved.toLocaleString()} of {plan.notes.length.toLocaleString()} saved…</span>
+              <div className="import-progress" role="progressbar" aria-valuemin={0} aria-valuemax={chosen.length} aria-valuenow={saved}>
+                <div style={{ width: `${Math.round((saved / Math.max(1, chosen.length)) * 100)}%` }} />
+                <span>{saved.toLocaleString()} of {chosen.length.toLocaleString()} saved…</span>
               </div>
             )}
           </>}
           {stage === 'done' && plan && (
-            <p className="import-done">Done — {plan.notes.length.toLocaleString()} notes are in the vault <strong>{name}</strong>, which is open now.</p>
+            <p className="import-done">Done — {(chosen.length - failed.length).toLocaleString()} notes are in the vault <strong>{name}</strong>, which is open now.
+              {failed.length > 0 && <><br /><span className="err-text">{failed.length} couldn’t be saved: {failed.slice(0, 5).join(', ')}{failed.length > 5 ? '…' : ''}</span></>}</p>
           )}
           {err && <div className="err">{err}</div>}
         </div>
@@ -113,7 +132,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
             ? <button className="btn primary small" onClick={onClose}>Close</button>
             : <>
                 <button className="btn small" onClick={onClose} disabled={busy}>Cancel</button>
-                {plan && <button className="btn primary small" onClick={run} disabled={busy || !name.trim()}>{stage === 'saving' ? 'Importing…' : `Import ${plan.notes.length.toLocaleString()} notes`}</button>}
+                {plan && <button className="btn primary small" onClick={run} disabled={busy || !name.trim() || !chosen.length}>{stage === 'saving' ? 'Importing…' : `Import ${chosen.length.toLocaleString()} notes`}</button>}
               </>}
         </div>
       </div>

@@ -746,3 +746,31 @@ p.small { margin: 0; line-height: 1.45; }
 @keyframes cheer-pop { from { transform: scale(0.4); opacity: 0; } to { transform: none; opacity: 1; } }
 .cheer-title { margin: 0 0 6px; font-weight: 600; }
 .cheer-body { margin: 0 0 18px; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+/* ---- import from Obsidian / Logseq / Roam ---- */
+.vault-new.import { border-top: 0; margin-top: 0; }
+.modal.import { max-width: 540px; max-height: calc(100dvh - 10vh - 16px); overflow: hidden; }
+.import-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 16px 14px; display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.5; }
+.import-body > p { margin: 0; }
+.import-how { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.import-how strong { color: var(--fg); }
+.import-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.import-summary { padding: 10px 12px; border-radius: 8px; background: var(--bg2); display: flex; flex-direction: column; gap: 6px; }
+.import-summary p { margin: 0; }
+.import-stats { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.import-stats b { color: var(--fg); font-size: 15px; }
+.import-field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+.import-field input { font-weight: 400; font-size: 14px; }
+.import-progress { position: relative; height: 26px; border-radius: 6px; background: var(--bg3); overflow: hidden; font-size: 12px; }
+.import-progress > div { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); transition: width .2s ease; }
+.import-progress > span { position: relative; display: block; line-height: 26px; padding: 0 10px; }
+.import-done { margin: 0; padding: 10px 12px; border-radius: 8px; background: rgba(42, 157, 99, 0.12); }
+
+/* today's journal note, once you click into it: a blank page most of the screen tall (it grows past that as you write) */
+.pane.section.roomy .note { min-height: 78vh; transition: min-height .3s ease; }
+
+/* ---- backup to this device ---- */
+.modal.backup { max-width: 540px; max-height: calc(100dvh - 10vh - 16px); overflow: hidden; }
+.backup-tree { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--bg2); font: 12px/1.55 ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre; overflow: auto; }
+.backup-bar { gap: 10px; }
+.backup-bar svg { color: var(--muted); }

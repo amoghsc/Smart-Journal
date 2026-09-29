@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Globe, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Globe, Import, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ImportDialog } from '../components/ImportDialog'
 import { RenameVaultDialog } from './RenameVaultDialog'
 import { useStore } from '../lib/store'
 import type { Vault, VaultKind } from '../lib/types'
@@ -8,6 +9,7 @@ import type { Vault, VaultKind } from '../lib/types'
 export function VaultSwitcher() {
   const { vaults, vault, setVault, createVault, deleteVault, pagesIn } = useStore()
   const [open, setOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [kind, setKind] = useState<VaultKind>('private')
@@ -93,10 +95,14 @@ export function VaultSwitcher() {
               <button className="btn primary small" onClick={add}>Create vault</button>
             </div>
           ) : (
-            <button className="vault-new" onClick={() => setAdding(true)}><Plus size={14} /> New vault</button>
+            <>
+              <button className="vault-new" onClick={() => setAdding(true)}><Plus size={14} /> New vault</button>
+              <button className="vault-new import" onClick={() => { setImporting(true); setOpen(false) }}><Import size={14} /> Import from Obsidian, Logseq or Roam…</button>
+            </>
           )}
         </div>
       )}
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
       {renaming && <RenameVaultDialog vault={renaming.vault} name={renaming.name} onClose={() => setRenaming(null)} />}
     </div>
   )

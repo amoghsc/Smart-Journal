@@ -39,6 +39,18 @@ export function JournalPane({ focus, onOpenLink, onOpenInVault, onDuplicate, com
   const [extra, setExtra] = useState<string[]>([])
   const [live, setLive] = useState<Set<string>>(() => new Set([focus.date]))
   const today = todayTitle()
+  // the first time you click into today's note it opens up to a blank page (most of the screen) to write in;
+  // it stays that roomy while the journal is open — other days, and later visits, show their real height
+  const [roomy, setRoomy] = useState(false)
+  const openUpToday = (e: React.MouseEvent) => {
+    if (roomy) return
+    const sec = (e.target as HTMLElement).closest<HTMLElement>('[data-date]')
+    if (sec?.dataset.date !== today || !(e.target as HTMLElement).closest('.pane-body')) return
+    setRoomy(true)
+    // bring the day's top up, so the room is below it
+    const box = scroller.current
+    if (box && sec.offsetTop - box.scrollTop > box.clientHeight * 0.3) box.scrollTo({ top: sec.offsetTop, behavior: 'smooth' })
+  }
 
   const daily = useMemo(() => pages.filter(p => isDailyTitle(p.title) && p.kind !== 'canvas'), [pages])
   const days = useMemo(() => {
@@ -257,10 +269,10 @@ export function JournalPane({ focus, onOpenLink, onOpenInVault, onDuplicate, com
         </div>
       )}
       <div className="journal-body">
-        <div ref={scroller} className="journal-scroll">
+        <div ref={scroller} className="journal-scroll" onMouseDown={openUpToday}>
           {shown.map(d => (
             <PagePane key={d} title={d} comments={comments}
-              section={{ live: live.has(d), onFind: openFind, find: find && q ? { query: q, current: at?.day === d ? at.local : -1 } : undefined }}
+              section={{ live: live.has(d), roomy: roomy && d === today, onFind: openFind, find: find && q ? { query: q, current: at?.day === d ? at.local : -1 } : undefined }}
               onOpenLink={onOpenLink} onOpenInVault={onOpenInVault} onDuplicate={onDuplicate}
               onNavigate={scrollTo} onRenamed={() => {}} />
           ))}

@@ -34,7 +34,7 @@ interface Props {
    * Find works across the whole journal: the search button calls `onFind` (with any selected words), and `find` is
    * what to highlight here — `current` is this day's current match, or -1 when it's in another day.
    */
-  section?: { live: boolean; find?: { query: string; current: number }; onFind?: (picked: string) => void }
+  section?: { live: boolean; roomy?: boolean; find?: { query: string; current: number }; onFind?: (picked: string) => void }
   onClose?: () => void
   /** Play the exit animation (the parent removes the pane afterwards). */
   closing?: boolean
@@ -252,7 +252,7 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
 
   return (
     <div ref={paneRef} data-date={section ? title : undefined}
-      className={'pane' + (section ? ' section' : '') + (closing ? ' closing' : '') + (comments && showComments && body.includes('data-comment-id') ? ' with-comments' : '')}>
+      className={'pane' + (section ? ' section' : '') + (section?.roomy ? ' roomy' : '') + (closing ? ' closing' : '') + (comments && showComments && body.includes('data-comment-id') ? ' with-comments' : '')}>
       <div className="pane-top">
       <div className="pane-head">
         <div className="pane-title">

@@ -8,7 +8,7 @@
 interface Run { text: string; bold?: boolean; italic?: boolean; strike?: boolean; highlight?: boolean; href?: string; note?: string }
 // g: which top-level part of the note a block came from (a paragraph, a whole list…); parts are set apart by a blank line
 type Block = { g: number } & (
-  | { kind: 'p'; runs: Run[]; level: number }                                        // a paragraph (level > 0: inside a list item)
+  | { kind: 'p'; runs: Run[]; level: number; heading?: number }                      // a paragraph (level > 0: inside a list item) or a heading
   | { kind: 'li'; runs: Run[]; level: number; ordered: boolean; n: number; list: number }
   | { kind: 'video'; url: string; level: number })
 
@@ -69,7 +69,7 @@ function readBlocks(html: string): Block[] {
       if (tag === 'BLOCKQUOTE' || tag === 'DIV') { walk(el, level); continue }
       const runs: Run[] = []
       inlineRuns(el, {}, runs)
-      blocks.push({ g, kind: 'p', runs, level })
+      blocks.push({ g, kind: 'p', runs, level, heading: /^H[1-6]$/.test(tag) ? Number(tag[1]) : undefined })
     }
   }
   walk(body, 0)
@@ -131,7 +131,7 @@ export function noteToMarkdown(title: string, html: string): string {
       const marker = b.ordered ? `${b.n}. ` : '- '
       indentAt[b.level + 1] = pad.length + marker.length
       out.push(pad + marker + mdRuns(b.runs, pad + ' '.repeat(marker.length)))
-    } else out.push(pad + mdRuns(b.runs, pad))
+    } else out.push(pad + (b.heading ? '#'.repeat(Math.min(6, b.heading + 1)) + ' ' : '') + mdRuns(b.runs, pad))
     prev = b
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n'

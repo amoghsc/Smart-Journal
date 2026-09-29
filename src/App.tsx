@@ -8,6 +8,7 @@ import { WRITE_FIRST_WORDS, aiFeaturesOn, aiScoreOn, aiToolsFirst, aiTwoVersions
 import { SwitchRow } from './components/Switch'
 import { AiToolsDialog } from './components/AiToolEditor'
 import { Notices } from './components/Notices'
+import { BackupDialog, BackupRunner, agoText, useBackupStatus } from './components/BackupDialog'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
 import { PagePane } from './views/PagePane'
@@ -132,6 +133,8 @@ function Workspace({ email }: { email: string }) {
   // the sidebar's width: drag its edge (long note names), remembered on this device
   const [sideW, setSideW] = useState(() => { const v = Number(localStorage.getItem('side-w')); return v >= SIDE_MIN && v <= SIDE_MAX ? v : SIDE_W })
   const [resizing, setResizing] = useState(false)
+  const [backupOpen, setBackupOpen] = useState(false)
+  const backup = useBackupStatus()
   // a tool to review, when My AI tools is opened from a notice
   const [reviewId, setReviewId] = useState<string | undefined>()
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -283,6 +286,9 @@ function Workspace({ email }: { email: string }) {
             <SwitchRow label="Show my AI tools at the top" on={toolsFirst} disabled={!aiOn} onChange={on => { setAiToolsFirst(on); setToolsFirst(on) }}
               hint="Your own tools above the built-in ones in the ✨ menu (off: at the bottom)" />
             <div className="menu-sep" />
+            <button className="menu-row" onClick={() => { setBackupOpen(true); setMenu(false) }} title="Keep a copy of every note in a folder on this device">
+              <span>Backup to this device</span><span className="menu-value">{backup.on ? (backup.needsPermission ? 'Paused' : agoText(backup.last)) : 'Off'}</span></button>
+            <div className="menu-sep" />
             <button onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
         )}
@@ -330,6 +336,8 @@ function Workspace({ email }: { email: string }) {
       </div>
       {publishing && vault && <PublishDialog vault={vault} onClose={() => setPublishing(false)} />}
       <DatePickerHost />
+      {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
+      <BackupRunner />
       {toolsOpen && <AiToolsDialog reviewId={reviewId} onClose={() => { setToolsOpen(false); setReviewId(undefined) }} />}
     </div>
   )

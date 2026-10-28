@@ -1,3 +1,4 @@
+import { getLocalPiece, onMac, putLocalPiece } from './macVault'
 import type { MarkType, Node as PMNode } from '@tiptap/pm/model'
 import { supabase } from './supabase'
 
@@ -151,6 +152,13 @@ export async function recordPiece(id: string, original: string, seed: string | n
   const meaningOf = wordsHash(original)
   const s = seed?.trim() || null
   pieces.set(id, { original, seed: s, seedMeaning: s ? null : 1, meaning: 1, meaningOf })
+  // a note in a vault on this Mac keeps its pieces on this Mac
+  if (onMac(pageId)) {
+    localIds.add(id)
+    await putLocalPiece(id, { id, original, seed: s, seed_meaning: s ? null : 1, task: task ?? null, page_id: pageId, meaning: 1, meaning_of: meaningOf })
+    window.dispatchEvent(new Event(PIECE_EVENT))
+    return
+  }
   const { error } = await supabase.from('nt_ai_pieces').upsert(
     { id, original, seed: s, seed_meaning: s ? null : 1, task: task ?? null, page_id: pageId ?? null, meaning: 1, meaning_of: meaningOf },
     { onConflict: 'id', ignoreDuplicates: true })
@@ -158,10 +166,32 @@ export async function recordPiece(id: string, original: string, seed: string | n
   window.dispatchEvent(new Event(PIECE_EVENT))
 }
 
-/** Fetch the originals of these pieces. Pieces marked before scores existed start from their current text. */
-export async function loadPieces(current: Map<string, string>): Promise<void> {
-  const missing = [...current.keys()].filter(id => !pieces.has(id) && UUID.test(id))
+// pieces kept on this Mac (notes in a vault on this Mac): never sent to the cloud
+const localIds = new Set<string>()
+
+/**
+ * Fetch the originals of these pieces (from this Mac for a note in a vault here). Pieces marked before scores existed
+ * start from their current text. `pageId`: the note they're in.
+ */
+export async function loadPieces(current: Map<string, string>, pageId?: string): Promise<void> {
+  let missing = [...current.keys()].filter(id => !pieces.has(id) && UUID.test(id))
   if (!missing.length) return
+  const here = onMac(pageId)
+  for (const id of missing) {
+    const r = await getLocalPiece<Record<string, unknown>>(id)
+    if (r) { localIds.add(id); pieces.set(id, { original: r.original as string, seed: (r.seed as string | null) ?? null, seedMeaning: r.seed ? (r.seed_meaning as number | null) : 1, meaning: r.meaning as number | null, meaningOf: r.meaning_of as string | null }) }
+  }
+  missing = missing.filter(id => !pieces.has(id))
+  if (!missing.length) return
+  if (here) {
+    for (const id of missing) {
+      const original = current.get(id)!
+      pieces.set(id, { original, seed: null, seedMeaning: 1, meaning: 1, meaningOf: wordsHash(original) })
+      localIds.add(id)
+      await putLocalPiece(id, { id, original, seed: null, seed_meaning: 1, page_id: pageId, meaning: 1, meaning_of: wordsHash(original) })
+    }
+    return
+  }
   const { data, error } = await supabase.from('nt_ai_pieces').select('id, original, seed, seed_meaning, meaning, meaning_of').in('id', missing)
   if (error) throw error
   for (const r of data ?? []) {
@@ -235,6 +265,11 @@ export async function checkMeaning(id: string, current: string): Promise<void> {
     }
   }
   if (!Object.keys(patch).length) return
+  if (localIds.has(id)) {
+    const r = await getLocalPiece<Record<string, unknown>>(id)
+    await putLocalPiece(id, { ...(r ?? { id, original: p.original, seed: p.seed }), ...patch })
+    return
+  }
   const { error } = await supabase.from('nt_ai_pieces').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
   if (error) console.warn('ai score: could not save meaning', error.message)
 }

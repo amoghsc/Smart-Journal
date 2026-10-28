@@ -8,6 +8,7 @@ import { LINK_TITLE_STYLES, linkTitleStyle, setLinkTitleStyle, WRITE_FIRST_WORDS
 import { SwitchRow } from './components/Switch'
 import { AiToolsDialog } from './components/AiToolEditor'
 import { Notices } from './components/Notices'
+import { MacVaultGate } from './components/MacVaultGate'
 import { BackupDialog, BackupRunner, agoText, useBackupStatus } from './components/BackupDialog'
 import { Login } from './views/Login'
 import { SetPassword } from './views/SetPassword'
@@ -56,7 +57,7 @@ export default function App() {
 }
 
 function Workspace({ email }: { email: string }) {
-  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish, aiTools } = useStore()
+  const { pages, vault, setVault, getPage, createLocal, discardLocal, addTime, canPublish, aiTools, macStatus } = useStore()
   const [toolsOpen, setToolsOpen] = useState(false)
   // open pages, left to right; the first is the "main" one the sidebar controls
   // a fresh start opens the journal at today; a reload in the same tab (e.g. after a crash) returns to the notes that were open
@@ -308,7 +309,7 @@ function Workspace({ email }: { email: string }) {
           onPointerDown={startResize} onDoubleClick={() => { setSideW(SIDE_W); localStorage.removeItem('side-w') }} />}
         <SplitPane storageKey="canvas-split" collapsed={!showCanvas}
           left={canvasMounted && !narrow ? <CanvasPane canvasId={canvasId} onSelectCanvas={setCanvasId} onOpenPage={openMain} /> : null}
-          right={
+          right={vault?.storage === 'mac' && macStatus[vault.id] !== 'ready' ? <MacVaultGate vault={vault} /> :
             <div className="panes" data-count={visible.length}>
               {visible.map(title => {
                 const i = panes.indexOf(title)

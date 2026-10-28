@@ -779,3 +779,23 @@ p.small { margin: 0; line-height: 1.45; }
 .note .link-loading { background: linear-gradient(90deg, transparent 0%, var(--accent-soft) 40%, transparent 80%) 0 0 / 200% 100%; animation: link-shimmer 1.1s linear infinite; border-radius: 3px; }
 @keyframes link-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 :root[data-anim="off"] .note .link-loading { animation: link-shimmer 1.1s linear infinite !important; }
+
+/* ---- vaults on this Mac ---- */
+.vault-mac { color: var(--muted); flex: none; }
+.vault-here { margin-top: 2px; padding: 8px 8px 6px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.vault-where { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--muted); }
+.vault-where b { color: var(--fg); font-weight: 500; }
+.vault-where .link { margin-left: auto; font-size: 12.5px; }
+.vault-switch { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.vault-switch input { width: auto; margin: 0; flex: none; accent-color: var(--accent); }
+.vault-switch .muted { font-size: 11.5px; }
+.move-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.move-list label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.move-list input { width: auto; margin: 0; accent-color: var(--accent); }
+.move-list .move-name { flex: 1; min-width: 0; }
+.move-list .ok { color: #2a9d63; vertical-align: -2px; }
+/* a vault on this Mac that can't be read right now */
+.mac-gate { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px; text-align: center; }
+.mac-gate h2 { margin: 0; font-size: 18px; }
+.mac-gate p { margin: 0; max-width: 420px; color: var(--muted); line-height: 1.5; }
+.mac-gate svg { color: var(--muted); }

@@ -369,3 +369,9 @@ export function planImport(files: InFile[], source: Source, imageFiles: number):
     links: stats.links, images: stats.images + imageFiles,
   }
 }
+
+/** A note file's Markdown (as Smart Journal or Obsidian writes it) → the note's HTML. */
+export function mdToNoteHtml(md: string): string {
+  const ctx: Ctx = { flavor: 'obsidian', target: t => { const c = t.trim().replace(/\.md$/i, ''); return dayOf(c) ?? c }, stats: { links: 0, images: 0 } }
+  return markdownToHtml(md, ctx)
+}

@@ -16,6 +16,12 @@ export interface Vault {
   published_slug?: string | null
   sort_order: number
   created_at: string
+  /** Where its notes live: the cloud, or a folder on the owner's Mac (lib/macVault). */
+  storage?: 'cloud' | 'mac'
+  /** No AI tools in this vault (nothing from it is sent to Gemini). */
+  ai_off?: boolean
+  /** Don't look up the titles of links pasted in this vault (their addresses aren't sent anywhere). */
+  link_lookup_off?: boolean
 }
 
 export interface Page {

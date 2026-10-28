@@ -53,6 +53,8 @@ function rectAnchor(el: Element | null) {
 export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVault, onNewBeside, onDuplicate, onClose, closing, comments, autoFocus, section }: Props) {
   const { pages, pagesIn, getPage, setBody, ensurePage, renamePage, deletePage, setDraft, vault, vaults, backlinks, byId, addWords, duplicatePage, saveNow } = useStore()
   const page = getPage(title)
+  // the vault this note is in (its AI and link-lookup switches apply)
+  const noteVault = vaults.find(v => v.id === (page?.vault_id ?? vault?.id))
   const body = page?.body ?? ''
   const daily = isDailyTitle(title)
   const [titleText, setTitleText] = useState(title)
@@ -329,7 +331,8 @@ export function PagePane({ title, onOpenLink, onNavigate, onRenamed, onOpenInVau
           onCreatePage={t => { ensurePage(t).catch(console.error) }} resolveTitle={t => getPage(t)?.title ?? t} titles={linkable} pickDate={pickDate}
           comments={comments && showComments} onAddComment={setFocusComment} onReady={setEditor} autoFocus={autoFocus}
           pageId={page && !page.local ? page.id : undefined} typedWords={page?.typed_words ?? 0}
-          onTyped={n => { if (!page || page.local) return false; addWords(page.id, n).catch(console.error); return true }} />}
+          onTyped={n => { if (!page || page.local) return false; addWords(page.id, n).catch(console.error); return true }}
+          aiOff={noteVault?.ai_off} linkLookupOff={noteVault?.link_lookup_off} />}
         {comments && showComments && editor && scrollRef.current && (
           <Comments editor={editor} scrollEl={scrollRef.current} focusId={focusComment} onFocused={() => setFocusComment(null)} />
         )}

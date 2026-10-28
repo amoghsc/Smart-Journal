@@ -54,6 +54,10 @@ interface Props {
   typedWords?: number
   /** Report words just typed by hand; return false to be asked again later (e.g. the note isn't saved yet). */
   onTyped?: (words: number) => boolean
+  /** This note's vault has the AI tools switched off (nothing from it goes to Gemini). */
+  aiOff?: boolean
+  /** This note's vault doesn't look up link titles (link addresses aren't sent anywhere). */
+  linkLookupOff?: boolean
 }
 
 const LONG_PRESS_MS = 550
@@ -111,7 +115,10 @@ function normaliseUrl(raw: string): string | null {
 interface SuggestState { items: SuggestItem[]; index: number; rect: DOMRect | null; command: (item: SuggestItem) => void }
 
 /** Single-surface editor: what you type is what you see. Bullets, numbering, links, [[wikilinks]], comments, YouTube paste. */
-export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus, pageId, typedWords, onTyped }: Props) {
+export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTitle, titles, pickDate, comments, onAddComment, onReady, autoFocus, pageId, typedWords, onTyped, aiOff, linkLookupOff }: Props) {
+  const linkOff = useRef(linkLookupOff); linkOff.current = linkLookupOff
+  const aiOffRef = useRef(aiOff); aiOffRef.current = aiOff
+  const linkStyle = () => (linkOff.current ? 'off' as const : linkTitleStyle())
   // latest callbacks, readable from editor options that are captured once
   const open = useRef(onOpenLink); open.current = onOpenLink
   const create = useRef(onCreatePage); create.current = onCreatePage
@@ -225,7 +232,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       // "/p": journaling prompts in the same pop-up; "/pr": a random one
       JournalPrompts.configure({ render: suggestRender }),
       // a pasted or typed web address turns into its page's title (a setting; no AI)
-      LinkTitles.configure({ style: linkTitleStyle }),
+      LinkTitles.configure({ style: () => linkStyle() }),
       Comment,
       AiFresh,
       AiText,
@@ -387,9 +394,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
     const score = async (checkMeanings: boolean) => {
       if (!alive || editor.isDestroyed) return
       const texts = pieceTexts(editor.state.doc, type)
-      if (texts.size) { try { await loadPieces(texts) } catch (e) { console.warn('ai score: could not load pieces', e); return } }
+      if (texts.size) { try { await loadPieces(texts, page.current) } catch (e) { console.warn('ai score: could not load pieces', e); return } }
       if (!alive || editor.isDestroyed) return
-      const gemini = aiFeaturesOn(), show = gemini && aiScoreOn()
+      // (a vault with AI switched off sends nothing to Gemini, the meaning check included)
+      const gemini = aiFeaturesOn() && !aiOffRef.current, show = gemini && aiScoreOn()
       const now = pieceTexts(editor.state.doc, type)
       const scores = new Map<string, Score>()
       for (const [id, text] of now) { const s = scoreFor(id, text, gemini); if (s) scores.set(id, s) }
@@ -776,10 +784,10 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
               <button className={active?.strike ? 'on' : ''} title="Strikethrough (⌘⇧S)" onMouseDown={keep} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
               <button className={active?.highlight ? 'on' : ''} title="Highlight" onMouseDown={keep} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
               <button className={active?.link ? 'on' : ''} title="Link to a website (⌘K)" onMouseDown={keep} onClick={() => openLinkField.current()}><Link2 size={15} /></button>
-              {active?.hasLinks && (
+              {active?.hasLinks && !linkLookupOff && (
                 <button title="Fix link titles — clear leftovers like <!----> and put each link’s page title in (no AI)" onMouseDown={keep} onClick={fixTitles}><TextCursorInput size={15} /></button>
               )}
-              {aiAllowed && aiOn && <>
+              {aiAllowed && aiOn && !aiOff && <>
                 <span className="bubble-sep" />
                 <button className={'ai-btn' + (wordsToGo ? ' locked' : '')} onMouseDown={keep}
                   title={wordsToGo ? `Write ${wordsToGo} more ${wordsToGo === 1 ? 'word' : 'words'} of your own in this note to use AI` : 'AI'}
@@ -862,7 +870,7 @@ export function NoteEditor({ html, onChange, onOpenLink, onCreatePage, resolveTi
       {toolEditor && <AiToolEditor sample={toolEditor.sample} onClose={() => setToolEditor(null)} />}
       {hoverLink?.web && editor && (
         <div className="unlink-pop" style={{ left: hoverLink.x, top: hoverLink.y }} onMouseEnter={clearHide} onMouseLeave={scheduleHide}>
-          <button title="Look up this page’s title again and put it in" onMouseDown={e => e.preventDefault()} onClick={() => refreshTitle(hoverLink.el)}><RefreshCw size={12} /><span>Refresh title</span></button>
+          {!linkLookupOff && <button title="Look up this page’s title again and put it in" onMouseDown={e => e.preventDefault()} onClick={() => refreshTitle(hoverLink.el)}><RefreshCw size={12} /><span>Refresh title</span></button>}
           <button title="Show the web address instead" onMouseDown={e => e.preventDefault()} onClick={() => showAddress(hoverLink.el)}><Globe size={12} /><span>Show address</span></button>
           <button title="Change the address (the words can be typed over like any text)" onMouseDown={e => e.preventDefault()} onClick={() => editLink(hoverLink.el)}><Pencil size={12} /><span>Edit</span></button>
           <button onMouseDown={e => e.preventDefault()} onClick={() => { const sp = hoveredSpan(hoverLink.el); setHoverLink(null); if (sp) editor.chain().focus().setTextSelection({ from: sp.from, to: sp.to }).unsetLink().setTextSelection(sp.to).run() }}><Unlink size={12} /><span>Unlink</span></button>

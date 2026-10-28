@@ -4,6 +4,7 @@ import { openedFromReset, supabase } from './supabase'
 import type { AiTool, AppNotice, CanvasItem, Page, PageKind, Vault, VaultKind } from './types'
 import { isDailyTitle, normTitle } from './links'
 import { extractLinks, relinkTitle, unlinkTitle } from './html'
+import { MacVault, closeMacVault, folderAllowed, folderSupported, forgetFolder, getLocalPiece, macVault, openMacVault, putLocalPiece, saveFolder, savedFolder, type MacStatus } from './macVault'
 
 const TOOL_COLS = 'id,name,scope,output,prompt,creativity,single,sort_order,owner,status,author_name'
 const PAGE_COLS = 'id,vault_id,title,kind,body,draft,active_seconds,typed_words,created_at,updated_at'
@@ -67,7 +68,18 @@ interface Store {
   importPages: (vaultId: string, notes: { title: string; body: string; created_at?: string; updated_at?: string }[], onProgress?: (saved: number) => void) => Promise<{ saved: number; failed: string[] }>
   /** Count words typed by hand in a note. */
   addWords: (id: string, words: number) => Promise<void>
-  createVault: (name: string, kind: VaultKind) => Promise<Vault>
+  /** A new vault: in the cloud, or (with `dir`) a folder on this Mac — an empty one, or one with Markdown notes in it. */
+  createVault: (name: string, kind: VaultKind, dir?: FileSystemDirectoryHandle) => Promise<Vault>
+  /** Vaults on this Mac: whether each is open (ready), needs the browser's OK, or needs its folder found. */
+  macStatus: Record<string, MacStatus>
+  /** Give the browser's OK to a vault folder again (from a click). */
+  allowFolder: (vaultId: string) => Promise<boolean>
+  /** Point a vault on this Mac at its folder (moved, or opened in another browser). */
+  reconnectFolder: (vaultId: string, dir: FileSystemDirectoryHandle) => Promise<void>
+  /** Copy a cloud vault into a folder on this Mac and check every note; the cloud copy stays until finishMoveToMac. */
+  moveVaultToMac: (vaultId: string, dir: FileSystemDirectoryHandle, onProgress?: (done: number, total: number) => void) => Promise<{ notes: number; canvases: number; pieces: number }>
+  /** The vault now lives on this Mac: delete its cloud copy. */
+  finishMoveToMac: (vaultId: string, dir: FileSystemDirectoryHandle) => Promise<void>
   updateVault: (id: string, patch: Partial<Vault>) => Promise<void>
   deleteVault: (id: string) => Promise<void>
   reload: () => Promise<void>
@@ -109,6 +121,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [allPages, setAllPages] = useState<Page[]>([])
   const [vaults, setVaults] = useState<Vault[]>([])
   const [vaultId, setVaultId] = useState<string | null>(() => localStorage.getItem('vault'))
+  const [macStatus, setMacStatus] = useState<Record<string, MacStatus>>({})
+  const vaultsRef = useRef<Vault[]>([]); vaultsRef.current = vaults
+  /** Is this vault's home a folder on this Mac? */
+  const onMacVault = (id: string) => vaultsRef.current.find(v => v.id === id)?.storage === 'mac'
+  const mac = (id: string) => { const mv = macVault(id); if (!mv) throw new Error('This vault’s folder on your Mac isn’t open — allow access to it first'); return mv }
 
   // latest local state, readable synchronously from debounced writers
   const latest = useRef(new Map<string, Page>())
@@ -142,12 +159,94 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (error) console.error('could not create a first vault', error); else vs = [first]
     }
     setVaults(vs)
-    const rows = (p.data ?? []) as Page[]
+    vaultsRef.current = vs
+    const macIds = new Set(vs.filter(v => v.storage === 'mac').map(v => v.id))
+    const rows = ((p.data ?? []) as Page[]).filter(r => !macIds.has(r.vault_id))
+    // notes in vaults on this Mac come from their folders, not the cloud
+    for (const pg of latest.current.values()) if (macIds.has(pg.vault_id) && !rows.some(r => r.id === pg.id)) rows.push(pg)
     // keep local versions of pages that still have a pending save
     const merged = rows.map(r => (timers.current.has(r.id) || inflight.current.has(r.id)) ? latest.current.get(r.id) ?? r : r)
     for (const [id, pg] of latest.current) if ((timers.current.has(id) || pg.local) && !merged.some(m => m.id === id)) merged.push(pg)
     latest.current = new Map(merged.map(pg => [pg.id, pg]))
     setAllPages(merged)
+    openMacVaults(vs)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- vaults on this Mac ----
+  const status = (id: string, st: MacStatus) => setMacStatus(m => (m[id] === st ? m : { ...m, [id]: st }))
+  /** Put a vault folder's notes in, replacing what was there for that vault. */
+  function takeMacPages(vaultId: string, ps: Page[]) {
+    const keep = [...latest.current.values()].filter(x => x.vault_id !== vaultId || timers.current.has(x.id))
+    const next = [...keep, ...ps.filter(x => !timers.current.has(x.id))]
+    latest.current = new Map(next.map(x => [x.id, x]))
+    setAllPages(next)
+  }
+  async function openFolder(v: Vault, dir: FileSystemDirectoryHandle) {
+    status(v.id, 'loading')
+    const mv = new MacVault(v, dir as never)
+    const owner = await mv.ownerId()
+    if (owner && owner !== v.id) { status(v.id, 'missing'); throw new Error('That folder belongs to another vault') }
+    if (!owner) await mv.claim()
+    const ps = await mv.load()
+    openMacVault(mv)
+    takeMacPages(v.id, ps)
+    status(v.id, 'ready')
+  }
+  /** Open the vaults on this Mac that aren't open yet (quietly: one that needs a click or its folder says so). */
+  async function openMacVaults(vs: Vault[]) {
+    for (const v of vs.filter(x => x.storage === 'mac')) {
+      if (macVault(v.id)) continue
+      if (!folderSupported()) { status(v.id, 'unsupported'); continue }
+      const dir = await savedFolder(v.id)
+      if (!dir) { status(v.id, 'missing'); continue }
+      if (!(await folderAllowed(dir))) { status(v.id, 'permission'); continue }
+      try { await openFolder(v, dir) } catch (e) { console.error('vault folder', v.name, e); status(v.id, 'error') }
+    }
+  }
+  const allowFolder = useCallback(async (id: string) => {
+    const v = vaultsRef.current.find(x => x.id === id), dir = await savedFolder(id)
+    if (!v || !dir || !(await folderAllowed(dir, true))) return false
+    await openFolder(v, dir)
+    return true
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const reconnectFolder = useCallback(async (id: string, dir: FileSystemDirectoryHandle) => {
+    const v = vaultsRef.current.find(x => x.id === id)
+    if (!v) return
+    closeMacVault(id)
+    await openFolder(v, dir)
+    await saveFolder(id, dir as never)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // edits made to the open vault's files in other apps show up here (checked every few seconds while visible)
+  // (the vault on screen, which may be the default one rather than one picked: see `vault` below)
+  const shownVault = useRef<string | null>(null)
+  useEffect(() => {
+    let busy = false
+    const look = async () => {
+      const mv = shownVault.current ? macVault(shownVault.current) : undefined
+      if (!mv || busy || document.visibilityState !== 'visible') return
+      busy = true
+      try {
+        const { upsert, remove } = await mv.changes()
+        for (const p of upsert) {
+          if (timers.current.has(p.id) || inflight.current.has(p.id)) {
+            // changed here and there at once: keep both — theirs as a copy beside ours
+            const copy: Page = { ...p, id: crypto.randomUUID(), title: `${p.title} (changed outside the app)` }
+            await mv.write(copy)
+            upsertLocal(copy)
+          } else upsertLocal(p)
+        }
+        if (remove.length) {
+          for (const id of remove) latest.current.delete(id)
+          setAllPages(prev => prev.filter(x => !remove.includes(x.id)))
+        }
+      } catch (e) { console.warn('vault folder: could not check for changes', e) } finally { busy = false }
+    }
+    const t = window.setInterval(look, 8000)
+    document.addEventListener('visibilitychange', look)
+    window.addEventListener('focus', look)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', look); window.removeEventListener('focus', look) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -171,6 +270,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (payload.eventType === 'DELETE') {
           const id = (payload.old as { id?: string }).id
           if (!id) return
+          // a note of a vault on this Mac: its cloud copy going (after a move) is no news here
+          const here = latest.current.get(id)
+          if (here && onMacVault(here.vault_id)) return
           latest.current.delete(id)
           setAllPages(prev => prev.filter(p => p.id !== id))
           return
@@ -179,6 +281,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // from them. So never take the message as the whole note — merge only the fields it carries.
         const row = payload.new as Partial<Page> & { id: string }
         if (!row?.id || timers.current.has(row.id) || inflight.current.has(row.id)) return
+        if ((row.vault_id && onMacVault(row.vault_id)) || onMacVault(latest.current.get(row.id)?.vault_id ?? '')) return
         const present = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined && v !== null)) as Partial<Page>
         const cur = latest.current.get(row.id)
         if (!cur) {
@@ -225,6 +328,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return vaults.find(v => v.id === vaultId) ?? vaults.find(v => v.kind === 'private') ?? vaults[0]
   }, [vaults, vaultId])
   useEffect(() => { if (vault) localStorage.setItem('vault', vault.id) }, [vault])
+  shownVault.current = vault?.id ?? null
   const setVault = useCallback((id: string) => setVaultId(id), [])
 
   const pages = useMemo(() => vault ? allPages.filter(p => p.vault_id === vault.id) : [], [allPages, vault])
@@ -261,6 +365,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const p = latest.current.get(id)
     if (!p) return
     if (p.local) return
+    if (onMacVault(p.vault_id)) { await mac(p.vault_id).write(p); return }
     const { error } = await supabase.from('nt_pages').upsert(row(p))
     if (error) {
       // 23505 = another device already created this title in this vault; take theirs and retry the body onto it
@@ -287,6 +392,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const now = new Date().toISOString()
     const p: Page = { id: crypto.randomUUID(), vault_id: vault.id, title: title.trim(), kind: kind ?? (isDailyTitle(title) ? 'daily' : 'note'), body: '', created_at: now, updated_at: now }
     upsertLocal(p)
+    if (onMacVault(vault.id)) { await mac(vault.id).write(p); return p }
     const { error } = await supabase.from('nt_pages').insert(row(p))
     if (error) { await reload(); const again = findLocal(title); if (again) return again; throw error }
     return p
@@ -325,8 +431,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const kind: PageKind = isDailyTitle(title) ? 'daily' : p.kind === 'daily' ? 'note' : p.kind
     const next: Page = { ...p, title: title.trim(), kind, local: false }
     upsertLocal(next)
-    const { error } = await supabase.from('nt_pages').upsert(row(next))
-    if (error) throw error
+    if (onMacVault(next.vault_id)) await mac(next.vault_id).write(next)
+    else { const { error } = await supabase.from('nt_pages').upsert(row(next)); if (error) throw error }
     // links elsewhere follow the page to its new name
     for (const lid of backlinks.get(normTitle(p.title)) ?? []) {
       const l = latest.current.get(lid) ?? byId.get(lid)
@@ -338,8 +444,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const gone = latest.current.get(id) ?? byId.get(id)
     timers.current.delete(id); writers.current.delete(id); latest.current.delete(id)
     setAllPages(prev => prev.filter(p => p.id !== id))
-    const { error } = await supabase.from('nt_pages').delete().eq('id', id)
-    if (error) throw error
+    if (gone && onMacVault(gone.vault_id)) await mac(gone.vault_id).remove(id)
+    else { const { error } = await supabase.from('nt_pages').delete().eq('id', id); if (error) throw error }
     // words that linked to the deleted page become plain text again
     if (gone) for (const lid of backlinks.get(normTitle(gone.title)) ?? []) {
       const l = latest.current.get(lid) ?? byId.get(lid)
@@ -351,6 +457,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const p = latest.current.get(id) ?? byId.get(id)
     if (!p) return
     upsertLocal({ ...p, draft })
+    if (onMacVault(p.vault_id)) { await mac(p.vault_id).write({ ...p, draft }); return }
     const { error } = await supabase.from('nt_pages').update({ draft }).eq('id', id)
     if (error) throw error
   }, [byId])
@@ -372,6 +479,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : { id: crypto.randomUUID(), vault_id: target, title: src.title, kind: src.kind, body: src.body, created_at: now, updated_at: now, draft: false })
     }
     if (!out.length) return 0
+    if (onMacVault(target)) { for (const p of out) { await mac(target).write(p); upsertLocal(p) } return out.length }
     const { error } = await supabase.from('nt_pages').upsert(out.map(row))
     if (error) throw error
     for (const p of out) upsertLocal(p)
@@ -401,6 +509,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(), vault_id: src.vault_id, title, kind: isDailyTitle(title) ? 'daily' : 'note', body,
       draft: inPublic ? true : (src.draft ?? false), created_at: now, updated_at: now, typed_words: src.typed_words ?? 0,
     }
+    if (onMacVault(p.vault_id)) {
+      await mac(p.vault_id).write(p)
+      upsertLocal(p)
+      for (const a of aiIds) { const r = await getLocalPiece<Record<string, unknown>>(a); if (r) await putLocalPiece(renamed.get(a)!, { ...r, id: renamed.get(a), page_id: p.id }) }
+      return p
+    }
     const { error } = await supabase.from('nt_pages').insert({ ...row(p), typed_words: p.typed_words })
     if (error) throw error
     upsertLocal(p)
@@ -415,6 +529,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [byId, vaults])
 
   const addTime = useCallback(async (id: string, seconds: number) => {
+    const here = latest.current.get(id)
+    if (here && onMacVault(here.vault_id)) { const next = { ...here, active_seconds: (here.active_seconds ?? 0) + seconds }; upsertLocal(next); schedule(id, () => writePage(id)); return }
     const { data, error } = await supabase.rpc('nt_add_time', { page: id, secs: seconds })
     if (error) throw error
     const p = latest.current.get(id)
@@ -425,6 +541,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // count them straight away (the write-first lock reads this), then take the server's total
     const before = latest.current.get(id)
     if (before) upsertLocal({ ...before, typed_words: (before.typed_words ?? 0) + words })
+    if (before && onMacVault(before.vault_id)) { schedule(id, () => writePage(id)); return }
     const { data, error } = await supabase.rpc('nt_add_words', { page: id, words })
     if (error) throw error
     const p = latest.current.get(id)
@@ -495,17 +612,90 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [aiTools])
 
   // ---- vaults ----
-  const createVault = useCallback(async (name: string, kind: VaultKind) => {
+  const createVault = useCallback(async (name: string, kind: VaultKind, dir?: FileSystemDirectoryHandle) => {
     const v: Vault = {
       id: crypto.randomUUID(), name: name.trim(), kind,
       site_title: kind === 'public' ? name.trim() : null, site_description: null, site_author: null, site_url: null,
-      sort_order: vaults.length, created_at: new Date().toISOString(),
+      sort_order: vaults.length, created_at: new Date().toISOString(), storage: dir ? 'mac' : 'cloud',
+    }
+    if (dir) {
+      // the folder must not already be another vault's
+      const owner = await new MacVault(v, dir as never).ownerId()
+      if (owner) throw new Error('That folder is already a vault — pick an empty folder, or one with just Markdown notes in it')
     }
     const { error } = await supabase.from('nt_vaults').insert(v)
     if (error) throw error
     setVaults(prev => [...prev, v])
+    vaultsRef.current = [...vaultsRef.current, v]
+    if (dir) { await saveFolder(v.id, dir as never); await openFolder(v, dir) }
     return v
-  }, [vaults.length])
+  }, [vaults.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Copy a cloud vault to a folder on this Mac, then read the folder back and check every note matches. */
+  const moveVaultToMac = useCallback(async (id: string, dir: FileSystemDirectoryHandle, onProgress?: (done: number, total: number) => void) => {
+    const v = vaultsRef.current.find(x => x.id === id)
+    if (!v) throw new Error('No such vault')
+    if (v.storage === 'mac') throw new Error('This vault is already on your Mac')
+    const mv = new MacVault({ ...v, storage: 'mac' }, dir as never)
+    const owner = await mv.ownerId()
+    if (owner && owner !== id) throw new Error('That folder is already another vault — pick an empty folder')
+    await saveNow()
+    const notes = [...latest.current.values()].filter(p => p.vault_id === id && !p.local)
+    await mv.claim()
+    let done = 0
+    for (const p of notes) { await mv.write(p); onProgress?.(++done, notes.length) }
+    // canvases' cards
+    const canvasIds = notes.filter(p => p.kind === 'canvas').map(p => p.id)
+    if (canvasIds.length) {
+      const { data, error } = await supabase.from('nt_canvas_items').select('id,canvas_id,page_id,text,x,y,w,h,color').in('canvas_id', canvasIds)
+      if (error) throw error
+      for (const c of canvasIds) await mv.saveCanvas(c, ((data ?? []) as CanvasItem[]).filter(i => i.canvas_id === c))
+    }
+    // the AI score's records of AI-written pieces in these notes
+    const ids = new Set(notes.flatMap(p => [...p.body.matchAll(/data-ai="([0-9a-f-]{36})"/g)].map(m => m[1])))
+    const pageIds = notes.map(p => p.id)
+    const pieces: Record<string, unknown>[] = []
+    for (let i = 0; i < pageIds.length; i += 200) {
+      const { data } = await supabase.from('nt_ai_pieces').select('*').in('page_id', pageIds.slice(i, i + 200))
+      pieces.push(...(data ?? []))
+    }
+    const more = [...ids].filter(x => !pieces.some(r => r.id === x))
+    for (let i = 0; i < more.length; i += 200) {
+      const { data } = await supabase.from('nt_ai_pieces').select('*').in('id', more.slice(i, i + 200))
+      pieces.push(...(data ?? []))
+    }
+    for (const r of pieces) await putLocalPiece(r.id as string, r)
+    // read it all back from the folder: every note must be there, exactly
+    const check = new MacVault({ ...v, storage: 'mac' }, dir as never)
+    const back = new Map((await check.load()).map(p => [p.id, p]))
+    const wrong = notes.filter(p => { const b = back.get(p.id); return !b || b.body !== p.body || b.title !== p.title })
+    if (wrong.length) throw new Error(`${wrong.length} note(s) didn’t read back the same (e.g. “${wrong[0].title}”) — nothing was changed in the cloud`)
+    return { notes: notes.length, canvases: canvasIds.length, pieces: pieces.length }
+  }, [saveNow])
+
+  /** After a checked copy: the vault lives on this Mac from now on, and its notes are deleted from the cloud. */
+  const finishMoveToMac = useCallback(async (id: string, dir: FileSystemDirectoryHandle) => {
+    const v = vaultsRef.current.find(x => x.id === id)
+    if (!v) return
+    await saveNow()
+    const notes = [...latest.current.values()].filter(p => p.vault_id === id)
+    const { error } = await supabase.from('nt_vaults').update({ storage: 'mac' }).eq('id', id)
+    if (error) throw error
+    const moved = { ...v, storage: 'mac' as const }
+    vaultsRef.current = vaultsRef.current.map(x => (x.id === id ? moved : x))
+    setVaults(prev => prev.map(x => (x.id === id ? moved : x)))
+    await saveFolder(id, dir as never)
+    await openFolder(moved, dir)
+    // the cloud copy goes: notes (their links and canvas cards with them) and the AI score's records
+    const ids = notes.map(p => p.id)
+    const aiIds = [...new Set(notes.flatMap(p => [...p.body.matchAll(/data-ai="([0-9a-f-]{36})"/g)].map(m => m[1])))]
+    for (let i = 0; i < ids.length; i += 200) {
+      await supabase.from('nt_ai_pieces').delete().in('page_id', ids.slice(i, i + 200))
+      const { error: e } = await supabase.from('nt_pages').delete().in('id', ids.slice(i, i + 200))
+      if (e) throw e
+    }
+    for (let i = 0; i < aiIds.length; i += 200) await supabase.from('nt_ai_pieces').delete().in('id', aiIds.slice(i, i + 200))
+  }, [saveNow]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const importPages = useCallback(async (vaultId: string, notes: { title: string; body: string; created_at?: string; updated_at?: string }[], onProgress?: (saved: number) => void) => {
     const now = new Date().toISOString()
@@ -513,6 +703,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(), vault_id: vaultId, title: n.title, kind: isDailyTitle(n.title) ? 'daily' : 'note', body: n.body, draft: false,
       created_at: n.created_at ?? now, updated_at: n.updated_at ?? n.created_at ?? now,
     }))
+    if (onMacVault(vaultId)) {
+      const failed: string[] = []
+      let n = 0
+      for (const p of ps) { try { await mac(vaultId).write(p); upsertLocal(p) } catch { failed.push(p.title) } onProgress?.(++n) }
+      return { saved: ps.length - failed.length, failed }
+    }
     // in batches, so a big graph doesn't make one huge request; a batch that fails is tried a note at a time, so
     // one note the database won't take doesn't stop the rest
     const saved: Page[] = [], failed: string[] = []
@@ -546,13 +742,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const deleteVault = useCallback(async (id: string) => {
     const { error } = await supabase.from('nt_vaults').delete().eq('id', id)
     if (error) throw error
+    // a vault on this Mac: its folder and files stay where they are
+    if (onMacVault(id)) { closeMacVault(id); await forgetFolder(id) }
     setVaults(prev => prev.filter(v => v.id !== id))
     setAllPages(prev => prev.filter(p => p.vault_id !== id))
     setVaultId(null)
   }, [])
 
   // ---- canvas items ----
+  /** The vault on this Mac a canvas is in, if it is. */
+  const macCanvas = (canvasId: string) => { const c = latest.current.get(canvasId); return c && onMacVault(c.vault_id) ? mac(c.vault_id) : null }
+  const saveCanvasSoon = (canvasId: string) => {
+    const mv = macCanvas(canvasId)
+    if (mv) schedule('canvas:' + canvasId, () => mv.saveCanvas(canvasId, [...items.current.values()].filter(i => i.canvas_id === canvasId)))
+  }
   const loadItems = useCallback(async (canvasId: string) => {
+    const mv = macCanvas(canvasId)
+    if (mv) { const list = await mv.loadCanvas(canvasId); for (const it of list) items.current.set(it.id, it); return list }
     const { data, error } = await supabase.from('nt_canvas_items').select('id,canvas_id,page_id,text,x,y,w,h,color').eq('canvas_id', canvasId)
     if (error) throw error
     return (data ?? []) as CanvasItem[]
@@ -563,6 +769,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addItem = useCallback(async (item: Omit<CanvasItem, 'id'>) => {
     const full: CanvasItem = { ...item, id: crypto.randomUUID() }
     items.current.set(full.id, full)
+    if (macCanvas(full.canvas_id)) { saveCanvasSoon(full.canvas_id); return full }
     const { error } = await supabase.from('nt_canvas_items').insert(full)
     if (error) throw error
     return full
@@ -571,6 +778,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateItem = useCallback((id: string, patch: Partial<CanvasItem>) => {
     const cur = items.current.get(id)
     items.current.set(id, { ...(cur ?? { id }), ...patch } as CanvasItem)
+    const canvasId = items.current.get(id)?.canvas_id
+    if (canvasId && macCanvas(canvasId)) { saveCanvasSoon(canvasId); return }
     schedule('item:' + id, async () => {
       const it = items.current.get(id)
       if (!it) return
@@ -580,6 +789,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const deleteItems = useCallback(async (ids: string[]) => {
+    const canvases = new Set(ids.map(id => items.current.get(id)?.canvas_id).filter((c): c is string => !!c && !!macCanvas(c)))
+    if (canvases.size) { for (const id of ids) items.current.delete(id); canvases.forEach(saveCanvasSoon); return }
     for (const id of ids) { items.current.delete(id); timers.current.delete('item:' + id); writers.current.delete('item:' + id) }
     const { error } = await supabase.from('nt_canvas_items').delete().in('id', ids)
     if (error) throw error
@@ -588,7 +799,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value: Store = {
     session, ready, recovering, endRecovery, canPublish, aiTools, sharedTools, isAdmin, pendingTools, submitAiTool, publishAiTool, notices, markNoticesRead, saveAiTool, deleteAiTool, moveAiTool, allPages, pages, vaults, vault, setVault, byId, byTitle, backlinks, getPage, pagesIn,
     ensurePage, setBody, createLocal, discardLocal, renamePage, deletePage, setDraft, copyPages, duplicatePage, importPages, addTime, addWords,
-    createVault, updateVault, deleteVault, reload, saveNow, loadItems, addItem, updateItem, deleteItems,
+    createVault, updateVault, deleteVault, reload, macStatus, allowFolder, reconnectFolder, moveVaultToMac, finishMoveToMac, saveNow, loadItems, addItem, updateItem, deleteItems,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

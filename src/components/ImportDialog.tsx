@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { FileArchive, FolderOpen, Globe, Import, Lock, X } from 'lucide-react'
+import { Cloud, FileArchive, FolderOpen, Globe, Import, Laptop, Lock, X } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { folderSupported, pickFolder } from '../lib/macVault'
 import { SOURCE_NAMES, detect, planImport, readPicked, type ImportPlan, type Source } from '../lib/importNotes'
 import type { VaultKind } from '../lib/types'
 
@@ -19,6 +20,8 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   const [plan, setPlan] = useState<ImportPlan | null>(null)
   const [name, setName] = useState('')
   const [kind, setKind] = useState<VaultKind>('private')
+  // where the new vault lives: a folder on this Mac (the default where the browser can keep one) or the cloud
+  const [where, setWhere] = useState<'mac' | 'cloud'>(() => (folderSupported() ? 'mac' : 'cloud'))
   const [stage, setStage] = useState<'pick' | 'reading' | 'ready' | 'saving' | 'done'>('pick')
   const [saved, setSaved] = useState(0)
   const [withEmpty, setWithEmpty] = useState(false)
@@ -48,10 +51,13 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   const run = async () => {
     if (!plan || !name.trim()) return
     if (vaults.some(v => v.name.toLowerCase() === name.trim().toLowerCase())) { setErr('A vault has that name already — pick another, so the notes stay apart.'); return }
+    // (the folder is asked for straight from the click)
+    const dir = where === 'mac' ? await pickFolder() : undefined
+    if (where === 'mac' && !dir) return
     setErr(null); setStage('saving'); setSaved(0)
     let made: string | null = null
     try {
-      const v = await createVault(name.trim(), kind)
+      const v = await createVault(name.trim(), kind, dir ?? undefined)
       made = v.id
       const r = await importPages(v.id, chosen, setSaved)
       setFailed(r.failed)
@@ -108,6 +114,11 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
             </div>
             <label className="import-field"><span>New vault’s name</span>
               <input value={name} maxLength={60} onChange={e => setName(e.target.value)} disabled={stage === 'saving'} autoFocus /></label>
+            <div className="seg wide">
+              <button className={where === 'mac' ? 'on' : ''} onClick={() => setWhere('mac')} disabled={stage === 'saving' || !folderSupported()}><Laptop size={12} /> On this Mac</button>
+              <button className={where === 'cloud' ? 'on' : ''} onClick={() => setWhere('cloud')} disabled={stage === 'saving'}><Cloud size={12} /> Cloud</button>
+            </div>
+            {where === 'mac' && <p className="muted small">You’ll pick an empty folder for it; each note becomes a Markdown file there, and nothing goes to the cloud.</p>}
             <div className="seg wide">
               <button className={kind === 'private' ? 'on' : ''} onClick={() => setKind('private')} disabled={stage === 'saving'}><Lock size={12} /> Private</button>
               <button className={kind === 'public' ? 'on' : ''} onClick={() => setKind('public')} disabled={stage === 'saving'}><Globe size={12} /> Public</button>

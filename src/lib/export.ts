@@ -118,8 +118,12 @@ function mdRuns(runs: Run[], pad: string): string {
   }).join('')
 }
 
-export function noteToMarkdown(title: string, html: string): string {
-  const out: string[] = [`# ${title}`, '']
+/**
+ * The note as Markdown. `heading`: start with "# Title" (and push the note's own headings a level down); off for a
+ * note file in a vault on this Mac, whose title is in its details and file name — so it reads back the same.
+ */
+export function noteToMarkdown(title: string, html: string, { heading = true } = {}): string {
+  const out: string[] = heading ? [`# ${title}`, ''] : []
   // how far each nesting level is indented: the width of the list marker it sits under
   const indentAt: number[] = [0]
   let prev: Block | null = null
@@ -131,7 +135,7 @@ export function noteToMarkdown(title: string, html: string): string {
       const marker = b.ordered ? `${b.n}. ` : '- '
       indentAt[b.level + 1] = pad.length + marker.length
       out.push(pad + marker + mdRuns(b.runs, pad + ' '.repeat(marker.length)))
-    } else out.push(pad + (b.heading ? '#'.repeat(Math.min(6, b.heading + 1)) + ' ' : '') + mdRuns(b.runs, pad))
+    } else out.push(pad + (b.heading ? '#'.repeat(Math.min(6, b.heading + (heading ? 1 : 0))) + ' ' : '') + mdRuns(b.runs, pad))
     prev = b
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n'
